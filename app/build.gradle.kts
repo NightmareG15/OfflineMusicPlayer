@@ -7,6 +7,16 @@ android {
     namespace = "com.nightmare.offlinemusic"
     compileSdk = 35
 
+    // Keep Java and Kotlin bytecode targets aligned to avoid Gradle JVM-target errors.
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    }
+
+    kotlinOptions {
+        jvmTarget = "17"
+    }
+
     defaultConfig {
         applicationId = "com.nightmare.offlinemusic"
         minSdk = 23
