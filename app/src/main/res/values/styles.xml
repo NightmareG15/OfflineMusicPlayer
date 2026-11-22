@@ -1,11 +1,10 @@
 <resources>
-    <!-- Android 15+: as barras do sistema ficam transparentes sobre o fundo claro do app,
-         então os ícones delas precisam ser escuros. -->
-    <style name="AppTheme" parent="android:style/Theme.Material.Light.NoActionBar">
+    <!-- Tema padrão: ESCURO. As cores do tema Claro/Escuro escolhido nas configurações são aplicadas pelo código. -->
+    <style name="AppTheme" parent="android:style/Theme.Material.NoActionBar">
         <item name="android:fontFamily">sans</item>
-        <item name="android:colorAccent">#7656D6</item>
-        <item name="android:windowLightStatusBar">true</item>
-        <item name="android:windowLightNavigationBar">true</item>
-        <item name="android:windowBackground">#F7F6FA</item>
+        <item name="android:colorAccent">#9B7BFF</item>
+        <item name="android:statusBarColor">#121016</item>
+        <item name="android:navigationBarColor">#121016</item>
+        <item name="android:windowBackground">#121016</item>
     </style>
 </resources>

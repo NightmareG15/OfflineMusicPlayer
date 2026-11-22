@@ -1,0 +1,10 @@
+<resources>
+    <!-- Tema padrão: ESCURO. As cores do tema Claro/Escuro escolhido nas configurações são aplicadas pelo código. -->
+    <style name="AppTheme" parent="android:style/Theme.Material.NoActionBar">
+        <item name="android:fontFamily">sans</item>
+        <item name="android:colorAccent">#9B7BFF</item>
+        <item name="android:statusBarColor">#121016</item>
+        <item name="android:navigationBarColor">#121016</item>
+        <item name="android:windowBackground">#121016</item>
+    </style>
+</resources>
