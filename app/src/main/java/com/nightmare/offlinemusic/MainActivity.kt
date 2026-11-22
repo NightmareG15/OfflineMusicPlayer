@@ -1,6 +1,7 @@
 package com.nightmare.offlinemusic
 
 import android.Manifest
+import android.app.Activity
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
@@ -19,26 +20,31 @@ import android.widget.LinearLayout
 import android.widget.ListView
 import android.widget.TextView
 import android.widget.Toast
-import android.app.Activity
 
 private data class Track(val title: String, val artist: String, val uri: Uri) {
-    override fun toString(): String = if (artist.isBlank() || artist == "<unknown>") title else "$title  —  $artist"
+    override fun toString(): String =
+        if (artist.isBlank() || artist == "<unknown>") title else "$title  —  $artist"
 }
 
 class MainActivity : Activity() {
     private val tracks = mutableListOf<Track>()
+    private lateinit var adapter: ArrayAdapter<Track>
     private lateinit var list: ListView
     private lateinit var nowPlaying: TextView
     private lateinit var playButton: Button
     private var musicService: MusicService? = null
     private var bound = false
 
-
     private val connection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
-            musicService = (binder as MusicService.LocalBinder).getService()
+            val service = (binder as MusicService.LocalBinder).getService()
+            musicService = service
             bound = true
+            // Sempre que a música/estado mudar no serviço, atualiza a tela.
+            service.onStateChanged = { title, playing -> runOnUiThread { render(title, playing) } }
+            render(service.currentTitle(), service.isPlayingNow())
         }
+
         override fun onServiceDisconnected(name: ComponentName?) {
             musicService = null
             bound = false
@@ -52,9 +58,10 @@ class MainActivity : Activity() {
         if (checkSelfPermission(permission) == PackageManager.PERMISSION_GRANTED) {
             loadTracks()
             requestNotificationPermissionIfNeeded()
-        } else requestPermissions(arrayOf(permission), 10)
+        } else {
+            requestPermissions(arrayOf(permission), 10)
+        }
     }
-
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
@@ -62,22 +69,44 @@ class MainActivity : Activity() {
             if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) {
                 loadTracks()
                 requestNotificationPermissionIfNeeded()
-            } else Toast.makeText(this, "Permissão necessária para ler suas músicas.", Toast.LENGTH_LONG).show()
+            } else {
+                Toast.makeText(this, "Permissão necessária para ler suas músicas.", Toast.LENGTH_LONG).show()
+            }
         }
     }
 
     private fun requestNotificationPermissionIfNeeded() {
-        if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+        if (Build.VERSION.SDK_INT >= 33 &&
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) {
             requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 20)
         }
     }
 
+    @Suppress("DEPRECATION")
     private fun buildInterface() {
+        val baseLeft = dp(18)
+        val baseTop = dp(22)
+        val baseRight = dp(18)
+        val baseBottom = dp(14)
+
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(18), dp(22), dp(18), dp(14))
+            setPadding(baseLeft, baseTop, baseRight, baseBottom)
             setBackgroundColor(0xFFF7F6FA.toInt())
         }
+        // Android 15+ desenha o app por baixo da barra de status/navegação:
+        // somamos o tamanho das barras ao espaçamento para nada ficar escondido.
+        root.setOnApplyWindowInsetsListener { view, insets ->
+            view.setPadding(
+                baseLeft + insets.systemWindowInsetLeft,
+                baseTop + insets.systemWindowInsetTop,
+                baseRight + insets.systemWindowInsetRight,
+                baseBottom + insets.systemWindowInsetBottom
+            )
+            insets
+        }
+
         val heading = TextView(this).apply {
             text = "Offline Music"
             textSize = 26f
@@ -101,20 +130,32 @@ class MainActivity : Activity() {
             text = "Atualizar biblioteca"
             setOnClickListener { loadTracks() }
         }
+
+        adapter = ArrayAdapter(this, android.R.layout.simple_list_item_1, tracks)
         list = ListView(this).apply {
             dividerHeight = dp(1)
-            adapter = ArrayAdapter(this@MainActivity, android.R.layout.simple_list_item_1, tracks)
+            adapter = this@MainActivity.adapter
             setOnItemClickListener { _, _, position, _ -> playTrack(position) }
         }
+
         val controls = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
         }
-        val previous = Button(this).apply { text = "⏮"; setOnClickListener { musicService?.previous() } }
-        playButton = Button(this).apply { text = "▶ / ❚❚"; setOnClickListener { musicService?.togglePlayback() } }
-        val next = Button(this).apply { text = "⏭"; setOnClickListener { musicService?.next() } }
+        val previous = Button(this).apply {
+            text = "Anterior"
+            setOnClickListener { musicService?.previous() }
+        }
+        playButton = Button(this).apply {
+            text = "Tocar"
+            setOnClickListener { musicService?.togglePlayback() }
+        }
+        val next = Button(this).apply {
+            text = "Próxima"
+            setOnClickListener { musicService?.next() }
+        }
         controls.addView(previous, LinearLayout.LayoutParams(0, dp(52), 1f))
-        controls.addView(playButton, LinearLayout.LayoutParams(0, dp(52), 1.4f))
+        controls.addView(playButton, LinearLayout.LayoutParams(0, dp(52), 1.2f))
         controls.addView(next, LinearLayout.LayoutParams(0, dp(52), 1f))
 
         root.addView(heading)
@@ -126,10 +167,28 @@ class MainActivity : Activity() {
         setContentView(root)
     }
 
+    /** Atualiza o texto da música atual e o botão Tocar/Pausar. */
+    private fun render(title: String?, playing: Boolean) {
+        nowPlaying.text = when {
+            title == null -> if (tracks.isEmpty()) "Nenhuma música encontrada no aparelho." else "Escolha uma música para começar"
+            playing -> "Tocando: $title"
+            else -> "Pausado: $title"
+        }
+        playButton.text = if (playing) "Pausar" else "Tocar"
+    }
+
     private fun loadTracks() {
         tracks.clear()
-        val collection = if (Build.VERSION.SDK_INT >= 29) MediaStore.Audio.Media.getContentUri(MediaStore.VOLUME_EXTERNAL) else MediaStore.Audio.Media.EXTERNAL_CONTENT_URI
-        val projection = arrayOf(MediaStore.Audio.Media._ID, MediaStore.Audio.Media.TITLE, MediaStore.Audio.Media.ARTIST)
+        val collection = if (Build.VERSION.SDK_INT >= 29) {
+            MediaStore.Audio.Media.getContentUri(MediaStore.VOLUME_EXTERNAL)
+        } else {
+            MediaStore.Audio.Media.EXTERNAL_CONTENT_URI
+        }
+        val projection = arrayOf(
+            MediaStore.Audio.Media._ID,
+            MediaStore.Audio.Media.TITLE,
+            MediaStore.Audio.Media.ARTIST
+        )
         val selection = "${MediaStore.Audio.Media.IS_MUSIC} != 0"
         val sort = "${MediaStore.Audio.Media.TITLE} COLLATE NOCASE ASC"
         val cursor: Cursor? = contentResolver.query(collection, projection, selection, null, sort)
@@ -144,7 +203,7 @@ class MainActivity : Activity() {
                 tracks.add(Track(title, artist, Uri.withAppendedPath(collection, id.toString())))
             }
         }
-        (list.adapter as ArrayAdapter<Track>).notifyDataSetChanged()
+        adapter.notifyDataSetChanged()
         if (tracks.isEmpty()) nowPlaying.text = "Nenhuma música encontrada no aparelho."
     }
 
@@ -158,7 +217,7 @@ class MainActivity : Activity() {
             putExtra(MusicService.EXTRA_INDEX, position)
         }
         if (Build.VERSION.SDK_INT >= 26) startForegroundService(intent) else startService(intent)
-        nowPlaying.text = "Tocando: ${tracks[position].title}"
+        nowPlaying.text = "Carregando: ${tracks[position].title}"
     }
 
     override fun onStart() {
@@ -167,7 +226,11 @@ class MainActivity : Activity() {
     }
 
     override fun onStop() {
-        if (bound) { unbindService(connection); bound = false }
+        if (bound) {
+            musicService?.onStateChanged = null
+            unbindService(connection)
+            bound = false
+        }
         super.onStop()
     }
 

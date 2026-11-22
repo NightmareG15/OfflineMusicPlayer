@@ -14,9 +14,11 @@ import android.net.Uri
 import android.os.Binder
 import android.os.Build
 import android.os.IBinder
+import android.os.PowerManager
 
 class MusicService : Service() {
     inner class LocalBinder : Binder() { fun getService(): MusicService = this@MusicService }
+
     private val binder = LocalBinder()
     private var player: MediaPlayer? = null
     private var uris = arrayListOf<String>()
@@ -25,7 +27,32 @@ class MusicService : Service() {
     private var index = 0
     private var audioManager: AudioManager? = null
     private var focusRequest: AudioFocusRequest? = null
-    private var isPlaying = false
+
+    // OBS: o nome NÃO pode ser "isPlaying". Dentro de blocos do MediaPlayer isso
+    // aponta para MediaPlayer.isPlaying (somente leitura) e quebra a compilação.
+    private var playing = false
+    private var pausedByFocusLoss = false
+    private var errorStreak = 0
+
+    /** A tela (MainActivity) se registra aqui para ser avisada de mudanças. */
+    var onStateChanged: ((title: String?, playing: Boolean) -> Unit)? = null
+
+    private val audioAttrs = AudioAttributes.Builder()
+        .setUsage(AudioAttributes.USAGE_MEDIA)
+        .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
+        .build()
+
+    private val focusListener = AudioManager.OnAudioFocusChangeListener { change ->
+        when (change) {
+            AudioManager.AUDIOFOCUS_LOSS -> pauseForFocus(resumeLater = false)
+            AudioManager.AUDIOFOCUS_LOSS_TRANSIENT,
+            AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> pauseForFocus(resumeLater = true)
+            AudioManager.AUDIOFOCUS_GAIN -> if (pausedByFocusLoss) {
+                pausedByFocusLoss = false
+                resumeIfPossible()
+            }
+        }
+    }
 
     override fun onCreate() {
         super.onCreate()
@@ -42,6 +69,7 @@ class MusicService : Service() {
                 titles = intent.getStringArrayListExtra(EXTRA_TITLES) ?: arrayListOf()
                 artists = intent.getStringArrayListExtra(EXTRA_ARTISTS) ?: arrayListOf()
                 index = intent.getIntExtra(EXTRA_INDEX, 0).coerceIn(0, (uris.size - 1).coerceAtLeast(0))
+                errorStreak = 0
                 playCurrent()
             }
             ACTION_TOGGLE -> togglePlayback()
@@ -52,20 +80,27 @@ class MusicService : Service() {
         return START_NOT_STICKY
     }
 
+    // ---- Funções usadas pela tela e pela notificação ----
+
+    fun currentTitle(): String? = titles.getOrNull(index)?.takeIf { player != null }
+
+    fun isPlayingNow(): Boolean = playing
+
     fun togglePlayback() {
-        val current = player
-        if (current == null) return
-        if (current.isPlaying) {
-            current.pause()
-            isPlaying = false
-            updateNotification()
-        } else {
-            if (requestAudioFocus()) {
+        val current = player ?: return
+        try {
+            if (playing) {
+                current.pause()
+                playing = false
+                pausedByFocusLoss = false
+            } else if (requestAudioFocus()) {
                 current.start()
-                isPlaying = true
-                updateNotification()
+                playing = true
             }
+        } catch (e: IllegalStateException) {
+            return
         }
+        updateNotification()
     }
 
     fun next() {
@@ -80,53 +115,102 @@ class MusicService : Service() {
         playCurrent()
     }
 
+    // ---- Lógica interna ----
+
     private fun playCurrent() {
         if (uris.isEmpty()) { stopPlayback(); return }
+        playing = false
+        pausedByFocusLoss = false
         startForeground(NOTIFICATION_ID, buildNotification())
         if (!requestAudioFocus()) { stopPlayback(); return }
-        player?.release()
-        player = null
+        releasePlayer()
+
+        val mp = MediaPlayer()
         try {
-            isPlaying = false
-            updateNotification()
-            player = MediaPlayer().apply {
-                setAudioAttributes(AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_MEDIA).setContentType(AudioAttributes.CONTENT_TYPE_MUSIC).build())
-                setDataSource(this@MusicService, Uri.parse(uris[index]))
-                setOnPreparedListener { mediaPlayer -> mediaPlayer.start(); isPlaying = true; updateNotification() }
-                setOnCompletionListener { next() }
-                setOnErrorListener { _, _, _ -> isPlaying = false; updateNotification(); true }
-                prepareAsync()
+            mp.setWakeMode(applicationContext, PowerManager.PARTIAL_WAKE_LOCK)
+            mp.setAudioAttributes(audioAttrs)
+            mp.setDataSource(this, Uri.parse(uris[index]))
+            mp.setOnPreparedListener { prepared ->
+                errorStreak = 0
+                prepared.start()
+                playing = true
+                updateNotification()
             }
-        } catch (_: Exception) {
-            isPlaying = false
-            stopForeground(true)
-            stopSelf()
+            mp.setOnCompletionListener { next() }
+            mp.setOnErrorListener { _, _, _ ->
+                // Arquivo com problema: pula para o próximo (e para se todos falharem).
+                errorStreak++
+                if (errorStreak >= uris.size) stopPlayback() else next()
+                true
+            }
+            player = mp
+            mp.prepareAsync()
+            updateNotification()
+        } catch (e: Exception) {
+            mp.release()
+            player = null
+            errorStreak++
+            if (errorStreak >= uris.size) stopPlayback() else next()
         }
     }
 
+    private fun releasePlayer() {
+        player?.release()
+        player = null
+    }
+
+    private fun pauseForFocus(resumeLater: Boolean) {
+        val current = player ?: return
+        if (!playing) return
+        try { current.pause() } catch (e: IllegalStateException) { return }
+        playing = false
+        pausedByFocusLoss = resumeLater
+        updateNotification()
+    }
+
+    private fun resumeIfPossible() {
+        val current = player ?: return
+        try { current.start() } catch (e: IllegalStateException) { return }
+        playing = true
+        updateNotification()
+    }
+
+    @Suppress("DEPRECATION")
     private fun requestAudioFocus(): Boolean {
         val manager = audioManager ?: return true
         return if (Build.VERSION.SDK_INT >= 26) {
-            val request = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
-                .setAudioAttributes(AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_MEDIA).setContentType(AudioAttributes.CONTENT_TYPE_MUSIC).build())
-                .setOnAudioFocusChangeListener { change ->
-                    if (change <= AudioManager.AUDIOFOCUS_LOSS_TRANSIENT) player?.pause()
-                }.build()
-            focusRequest = request
+            // O pedido de foco é criado uma única vez e reaproveitado.
+            val request = focusRequest ?: AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
+                .setAudioAttributes(audioAttrs)
+                .setOnAudioFocusChangeListener(focusListener)
+                .build()
+                .also { focusRequest = it }
             manager.requestAudioFocus(request) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
         } else {
-            @Suppress("DEPRECATION")
-            manager.requestAudioFocus(null, AudioManager.STREAM_MUSIC, AudioManager.AUDIOFOCUS_GAIN) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
+            manager.requestAudioFocus(focusListener, AudioManager.STREAM_MUSIC, AudioManager.AUDIOFOCUS_GAIN) ==
+                AudioManager.AUDIOFOCUS_REQUEST_GRANTED
         }
     }
 
+    @Suppress("DEPRECATION")
+    private fun abandonAudioFocus() {
+        val manager = audioManager ?: return
+        if (Build.VERSION.SDK_INT >= 26) {
+            focusRequest?.let { manager.abandonAudioFocusRequest(it) }
+        } else {
+            manager.abandonAudioFocus(focusListener)
+        }
+    }
+
+    @Suppress("DEPRECATION")
     private fun stopPlayback() {
-        player?.release()
-        player = null
-        isPlaying = false
-        if (Build.VERSION.SDK_INT >= 26) focusRequest?.let { audioManager?.abandonAudioFocusRequest(it) }
+        releasePlayer()
+        playing = false
+        pausedByFocusLoss = false
+        abandonAudioFocus()
         stopForeground(true)
         stopSelf()
+        onStateChanged?.invoke(null, false)
     }
 
     private fun createNotificationChannel() {
@@ -136,19 +220,29 @@ class MusicService : Service() {
         }
     }
 
+    @Suppress("DEPRECATION")
     private fun buildNotification(): Notification {
-        val openApp = PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+        val openApp = PendingIntent.getActivity(
+            this, 0, Intent(this, MainActivity::class.java),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
         val previous = servicePendingIntent(ACTION_PREVIOUS, 1)
         val toggle = servicePendingIntent(ACTION_TOGGLE, 2)
         val next = servicePendingIntent(ACTION_NEXT, 3)
         val builder = if (Build.VERSION.SDK_INT >= 26) Notification.Builder(this, CHANNEL_ID) else Notification.Builder(this)
-        return builder.setContentTitle(titles.getOrNull(index) ?: "Offline Music")
-            .setContentText(artists.getOrNull(index)?.takeIf { it.isNotBlank() } ?: "Reprodução local")
+        return builder
+            .setContentTitle(titles.getOrNull(index) ?: "Offline Music")
+            .setContentText(artists.getOrNull(index)?.takeIf { it.isNotBlank() && it != "<unknown>" } ?: "Reprodução local")
             .setSmallIcon(android.R.drawable.ic_media_play)
             .setContentIntent(openApp)
-            .setOngoing(isPlaying)
+            .setOngoing(playing)
+            .setOnlyAlertOnce(true)
             .addAction(android.R.drawable.ic_media_previous, "Anterior", previous)
-            .addAction(if (isPlaying) android.R.drawable.ic_media_pause else android.R.drawable.ic_media_play, if (isPlaying) "Pausar" else "Reproduzir", toggle)
+            .addAction(
+                if (playing) android.R.drawable.ic_media_pause else android.R.drawable.ic_media_play,
+                if (playing) "Pausar" else "Reproduzir",
+                toggle
+            )
             .addAction(android.R.drawable.ic_media_next, "Próxima", next)
             .build()
     }
@@ -160,11 +254,13 @@ class MusicService : Service() {
 
     private fun updateNotification() {
         (getSystemService(NOTIFICATION_SERVICE) as NotificationManager).notify(NOTIFICATION_ID, buildNotification())
+        onStateChanged?.invoke(titles.getOrNull(index), playing)
     }
 
     override fun onDestroy() {
-        player?.release()
-        player = null
+        releasePlayer()
+        abandonAudioFocus()
+        onStateChanged = null
         super.onDestroy()
     }
 
