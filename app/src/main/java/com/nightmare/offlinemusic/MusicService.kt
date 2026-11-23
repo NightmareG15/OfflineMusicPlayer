@@ -76,7 +76,7 @@ class MusicService : Service() {
     // Fone desconectado (cabo ou Bluetooth): pausa para o som não sair no alto-falante.
     private val noisyReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
-            if (intent?.action == AudioManager.ACTION_AUDIO_BECOMING_NOISY) pause()
+            if (intent?.action == AudioManager.ACTION_AUDIO_BECOMING_NOISY && Prefs.pauseOnUnplug(this@MusicService)) pause()
         }
     }
 
@@ -119,7 +119,6 @@ class MusicService : Service() {
             ACTION_TOGGLE -> togglePlayback()
             ACTION_NEXT -> next()
             ACTION_PREVIOUS -> previous()
-            ACTION_STOP -> stopPlayback()
         }
         return START_NOT_STICKY
     }
@@ -162,10 +161,6 @@ class MusicService : Service() {
 
     fun isPlayingNow(): Boolean = playing
 
-    fun isShuffleOn(): Boolean = shuffle
-
-    fun getRepeatMode(): Int = repeatMode
-
     fun positionMs(): Int {
         val current = player ?: return 0
         if (!prepared) return 0
@@ -189,14 +184,7 @@ class MusicService : Service() {
         if (playing) pause() else resumeIfPossible(requestFocus = true)
     }
 
-    fun pause() {
-        val current = player ?: return
-        if (!playing) return
-        try { current.pause() } catch (e: IllegalStateException) { return }
-        playing = false
-        pausedByFocusLoss = false
-        updateNotification()
-    }
+    fun pause() = pauseInternal(resumeLater = false)
 
     fun next() = advance(auto = false)
 
@@ -290,9 +278,7 @@ class MusicService : Service() {
             }
             mp.setOnCompletionListener { advance(auto = true) }
             mp.setOnErrorListener { _, _, _ ->
-                // Arquivo com problema: pula para o próximo (e para se todos falharem).
-                errorStreak++
-                if (errorStreak >= ids.size) stopPlayback() else advance(auto = false)
+                skipBrokenTrack()
                 true
             }
             player = mp
@@ -302,8 +288,7 @@ class MusicService : Service() {
         } catch (e: Exception) {
             mp.release()
             player = null
-            errorStreak++
-            if (errorStreak >= ids.size) stopPlayback() else advance(auto = false)
+            skipBrokenTrack()
         }
     }
 
@@ -313,13 +298,22 @@ class MusicService : Service() {
         prepared = false
     }
 
-    private fun pauseForFocus(resumeLater: Boolean) {
+    private fun pauseForFocus(resumeLater: Boolean) = pauseInternal(resumeLater)
+
+    /** Pausa a música. Com [resumeLater], volta a tocar sozinha quando o outro app liberar o áudio. */
+    private fun pauseInternal(resumeLater: Boolean) {
         val current = player ?: return
         if (!playing) return
         try { current.pause() } catch (e: IllegalStateException) { return }
         playing = false
         pausedByFocusLoss = resumeLater
         updateNotification()
+    }
+
+    /** Arquivo com problema: pula para o próximo (e para tudo se todos falharem). */
+    private fun skipBrokenTrack() {
+        errorStreak++
+        if (errorStreak >= ids.size) stopPlayback() else advance(auto = false)
     }
 
     private fun resumeIfPossible(requestFocus: Boolean = false) {
@@ -478,7 +472,6 @@ class MusicService : Service() {
         const val ACTION_TOGGLE = "com.nightmare.offlinemusic.TOGGLE"
         const val ACTION_NEXT = "com.nightmare.offlinemusic.NEXT"
         const val ACTION_PREVIOUS = "com.nightmare.offlinemusic.PREVIOUS"
-        const val ACTION_STOP = "com.nightmare.offlinemusic.STOP"
         const val REPEAT_OFF = 0
         const val REPEAT_ALL = 1
         const val REPEAT_ONE = 2

@@ -19,7 +19,6 @@ import android.graphics.PorterDuffColorFilter
 import android.graphics.Typeface
 import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.GradientDrawable
-import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
@@ -45,7 +44,6 @@ import android.widget.LinearLayout
 import android.widget.ListView
 import android.widget.SeekBar
 import android.widget.TextView
-import android.widget.Toast
 import java.text.Normalizer
 
 /**
@@ -173,7 +171,7 @@ class MainActivity : Activity() {
                 loadTracks()
                 requestNotificationPermissionIfNeeded()
             } else {
-                Toast.makeText(this, "Permissão necessária para ler suas músicas.", Toast.LENGTH_LONG).show()
+                Ui.toast(this, "Permissão necessária para ler suas músicas.", long = true)
                 refreshEmptyText()
             }
         }
@@ -191,7 +189,6 @@ class MainActivity : Activity() {
 
     private fun dp(value: Int): Int = Ui.dp(this, value)
 
-    @Suppress("DEPRECATION")
     private fun buildInterface() {
         val baseLeft = dp(16)
         val baseTop = dp(12)
@@ -214,17 +211,7 @@ class MainActivity : Activity() {
         content.isFocusableInTouchMode = true
         root.addView(content, FrameLayout.LayoutParams(-1, -1))
 
-        // Android 15+ desenha o app por baixo das barras do sistema (e o teclado também entra aqui):
-        // somamos o tamanho delas ao espaçamento para nada ficar escondido.
-        root.setOnApplyWindowInsetsListener { _, insets ->
-            content.setPadding(
-                baseLeft + insets.systemWindowInsetLeft,
-                baseTop + insets.systemWindowInsetTop,
-                baseRight + insets.systemWindowInsetRight,
-                baseBottom + insets.systemWindowInsetBottom
-            )
-            insets
-        }
+        Ui.padForSystemBars(root, content, baseLeft, baseTop, baseRight, baseBottom)
 
         // ---- Topo: título + botões (listas, imagem de fundo, configurações)
         val header = LinearLayout(this)
@@ -479,7 +466,7 @@ class MainActivity : Activity() {
         val service = musicService
         if (service != null) service.setShuffle(on) else Prefs.setShuffle(this, on)
         refreshModeButtons()
-        Toast.makeText(this, if (on) "Aleatório: ligado" else "Aleatório: desligado", Toast.LENGTH_SHORT).show()
+        Ui.toast(this, if (on) "Aleatório: ligado" else "Aleatório: desligado")
     }
 
     private fun cycleRepeat() {
@@ -492,7 +479,7 @@ class MainActivity : Activity() {
             MusicService.REPEAT_ONE -> "Repetir: esta faixa"
             else -> "Repetir: desligado"
         }
-        Toast.makeText(this, text, Toast.LENGTH_SHORT).show()
+        Ui.toast(this, text)
     }
 
     // ------------------------------------------------------------------ biblioteca
@@ -609,7 +596,7 @@ class MainActivity : Activity() {
         if (position !in shown.indices) return
         val service = musicService
         if (service == null) {
-            Toast.makeText(this, "Aguarde um instante e tente de novo.", Toast.LENGTH_SHORT).show()
+            Ui.toast(this, "Aguarde um instante e tente de novo.")
             return
         }
         val count = shown.size
@@ -664,7 +651,7 @@ class MainActivity : Activity() {
         }
         musicService?.renameTrack(track.id, newTitle)
         rebuildBase()
-        Toast.makeText(this, "Nome alterado só dentro do app.", Toast.LENGTH_SHORT).show()
+        Ui.toast(this, "Nome alterado só dentro do app.")
     }
 
     // ------------------------------------------------------------------ playlists
@@ -692,7 +679,7 @@ class MainActivity : Activity() {
     private fun createPlaylist(name: String): Boolean {
         val lists = Prefs.loadPlaylists(this)
         if (lists.any { it.name.equals(name, ignoreCase = true) }) {
-            Toast.makeText(this, "Já existe uma lista com esse nome.", Toast.LENGTH_SHORT).show()
+            Ui.toast(this, "Já existe uma lista com esse nome.")
             return false
         }
         lists.add(Playlist(name, mutableListOf()))
@@ -704,12 +691,12 @@ class MainActivity : Activity() {
         val lists = Prefs.loadPlaylists(this)
         val target = lists.firstOrNull { it.name == playlistName } ?: return
         if (target.ids.contains(trackId)) {
-            Toast.makeText(this, "Essa música já está em \"$playlistName\".", Toast.LENGTH_SHORT).show()
+            Ui.toast(this, "Essa música já está em \"$playlistName\".")
             return
         }
         target.ids.add(trackId)
         Prefs.savePlaylists(this, lists)
-        Toast.makeText(this, "Adicionada a \"$playlistName\".", Toast.LENGTH_SHORT).show()
+        Ui.toast(this, "Adicionada a \"$playlistName\".")
         rebuildBase()
     }
 
@@ -759,7 +746,7 @@ class MainActivity : Activity() {
                         val lists = Prefs.loadPlaylists(this)
                         val clash = lists.any { it.name.equals(newName, ignoreCase = true) && it.name != playlist.name }
                         if (clash) {
-                            Toast.makeText(this, "Já existe uma lista com esse nome.", Toast.LENGTH_SHORT).show()
+                            Ui.toast(this, "Já existe uma lista com esse nome.")
                         } else {
                             lists.firstOrNull { it.name == playlist.name }?.name = newName
                             Prefs.savePlaylists(this, lists)
@@ -825,7 +812,7 @@ class MainActivity : Activity() {
         try {
             startActivityForResult(intent, REQ_PICK)
         } catch (e: ActivityNotFoundException) {
-            Toast.makeText(this, "Nenhum app de galeria encontrado.", Toast.LENGTH_LONG).show()
+            Ui.toast(this, "Nenhum app de galeria encontrado.", long = true)
         }
     }
 

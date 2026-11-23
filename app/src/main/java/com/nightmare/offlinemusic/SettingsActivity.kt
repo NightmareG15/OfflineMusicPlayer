@@ -1,41 +1,39 @@
 package com.nightmare.offlinemusic
 
 import android.app.Activity
+import android.app.AlertDialog
 import android.content.ActivityNotFoundException
 import android.content.Intent
+import android.content.pm.ApplicationInfo
+import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
 import android.view.Gravity
+import android.view.View
 import android.widget.LinearLayout
+import android.widget.ScrollView
 import android.widget.Switch
 import android.widget.TextView
-import android.widget.Toast
 
-/** Tela de configurações simples: trocar o tema (Claro/Escuro) e abrir as configurações de som do Android. */
+/** Configurações: tema, pausa ao desconectar o fone, atalho de som, redefinir e informações do app. */
 class SettingsActivity : Activity() {
+    private lateinit var p: Ui.Palette
 
-    @Suppress("DEPRECATION")
+    private fun dp(value: Int): Int = Ui.dp(this, value)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        val p = Ui.palette(this)
-        val baseLeft = Ui.dp(this, 16)
-        val baseTop = Ui.dp(this, 12)
-        val baseRight = Ui.dp(this, 16)
-        val baseBottom = Ui.dp(this, 12)
+        p = Ui.palette(this)
+        val baseLeft = dp(16)
+        val baseTop = dp(12)
+        val baseRight = dp(16)
+        val baseBottom = dp(12)
 
         val root = LinearLayout(this)
         root.orientation = LinearLayout.VERTICAL
         root.setBackgroundColor(p.bg)
         root.setPadding(baseLeft, baseTop, baseRight, baseBottom)
-        root.setOnApplyWindowInsetsListener { view, insets ->
-            view.setPadding(
-                baseLeft + insets.systemWindowInsetLeft,
-                baseTop + insets.systemWindowInsetTop,
-                baseRight + insets.systemWindowInsetRight,
-                baseBottom + insets.systemWindowInsetBottom
-            )
-            insets
-        }
+        Ui.padForSystemBars(root, root, baseLeft, baseTop, baseRight, baseBottom)
 
         // Topo: seta de voltar + título
         val header = LinearLayout(this)
@@ -48,40 +46,128 @@ class SettingsActivity : Activity() {
         title.textSize = 22f
         title.setTextColor(p.text)
         title.setTypeface(null, android.graphics.Typeface.BOLD)
-        header.addView(back, LinearLayout.LayoutParams(Ui.dp(this, 44), Ui.dp(this, 44)))
-        header.addView(title, LinearLayout.LayoutParams(0, -2, 1f).apply { leftMargin = Ui.dp(this@SettingsActivity, 8) })
+        header.addView(back, LinearLayout.LayoutParams(dp(44), dp(44)))
+        header.addView(title, LinearLayout.LayoutParams(0, -2, 1f).apply { leftMargin = dp(8) })
         root.addView(header)
 
-        // Tema: Escuro (ligado) / Claro (desligado)
-        val themeRow = LinearLayout(this)
-        themeRow.orientation = LinearLayout.HORIZONTAL
-        themeRow.gravity = Gravity.CENTER_VERTICAL
-        val themeLabel = TextView(this)
-        themeLabel.text = "Tema escuro"
-        themeLabel.textSize = 16f
-        themeLabel.setTextColor(p.text)
-        val themeSwitch = Switch(this)
-        themeSwitch.isChecked = p.dark
-        themeSwitch.setOnCheckedChangeListener { _, checked ->
+        // O conteúdo rola, para caber em telas pequenas.
+        val body = LinearLayout(this)
+        body.orientation = LinearLayout.VERTICAL
+        val scroll = ScrollView(this)
+        scroll.addView(body, LinearLayout.LayoutParams(-1, -2))
+        root.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
+
+        body.addView(sectionTitle("Aparência"))
+        body.addView(switchRow("Tema escuro", "Desligue para usar o tema claro", p.dark) { checked ->
             Prefs.setDark(this, checked)
             recreate()
-        }
-        themeRow.addView(themeLabel, LinearLayout.LayoutParams(0, -2, 1f))
-        themeRow.addView(themeSwitch, LinearLayout.LayoutParams(-2, -2))
-        root.addView(themeRow, LinearLayout.LayoutParams(-1, -2).apply {
-            topMargin = Ui.dp(this@SettingsActivity, 24)
-            bottomMargin = Ui.dp(this@SettingsActivity, 8)
         })
 
-        // Atalho para as configurações de som do Android
+        body.addView(sectionTitle("Reprodução"))
+        body.addView(
+            switchRow(
+                "Pausar ao desconectar o fone",
+                "Evita que o som saia no alto-falante sem querer",
+                Prefs.pauseOnUnplug(this)
+            ) { checked -> Prefs.setPauseOnUnplug(this, checked) }
+        )
+
+        body.addView(sectionTitle("Som"))
         val soundButton = Ui.textButton(this, "Abrir configurações de som do Android", p)
         soundButton.setOnClickListener { openSoundSettings() }
-        root.addView(soundButton, LinearLayout.LayoutParams(-1, Ui.dp(this, 52)).apply {
-            topMargin = Ui.dp(this@SettingsActivity, 16)
-        })
+        body.addView(soundButton, LinearLayout.LayoutParams(-1, dp(52)))
+
+        body.addView(sectionTitle("Redefinir"))
+        val resetButton = Ui.textButton(this, "Redefinir tudo para o padrão", p)
+        resetButton.setOnClickListener { confirmReset() }
+        body.addView(resetButton, LinearLayout.LayoutParams(-1, dp(52)))
+
+        body.addView(sectionTitle("Sobre o app"))
+        body.addView(aboutCard(), LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(8) })
 
         setContentView(root)
         Ui.applySystemBars(this, p)
+    }
+
+    private fun sectionTitle(text: String): TextView {
+        val view = TextView(this)
+        view.text = text
+        view.textSize = 13f
+        view.setTextColor(p.accent)
+        view.setTypeface(null, android.graphics.Typeface.BOLD)
+        view.setPadding(0, dp(24), 0, dp(8))
+        return view
+    }
+
+    /** Linha com texto à esquerda e um botão liga/desliga à direita. */
+    private fun switchRow(label: String, hint: String, checked: Boolean, onChange: (Boolean) -> Unit): LinearLayout {
+        val row = LinearLayout(this)
+        row.orientation = LinearLayout.HORIZONTAL
+        row.gravity = Gravity.CENTER_VERTICAL
+        val texts = LinearLayout(this)
+        texts.orientation = LinearLayout.VERTICAL
+        val labelView = TextView(this)
+        labelView.text = label
+        labelView.textSize = 16f
+        labelView.setTextColor(p.text)
+        val hintView = TextView(this)
+        hintView.text = hint
+        hintView.textSize = 12f
+        hintView.setTextColor(p.sub)
+        texts.addView(labelView)
+        texts.addView(hintView)
+        val toggle = Switch(this)
+        toggle.isChecked = checked
+        toggle.setOnCheckedChangeListener { _, isOn -> onChange(isOn) }   // definido depois do estado inicial
+        row.addView(texts, LinearLayout.LayoutParams(0, -2, 1f))
+        row.addView(toggle, LinearLayout.LayoutParams(-2, -2))
+        return row
+    }
+
+    private fun confirmReset() {
+        AlertDialog.Builder(this, Ui.dialogTheme(p))
+            .setTitle("Redefinir configurações?")
+            .setMessage(
+                "Remove a imagem de fundo e volta o tema (escuro) e a pausa ao desconectar o fone ao padrão.\n\n" +
+                    "Suas playlists e os nomes personalizados das músicas NÃO são apagados."
+            )
+            .setPositiveButton("Redefinir") { _, _ ->
+                Prefs.resetSettings(this)
+                Ui.toast(this, "Configurações redefinidas.")
+                recreate()
+            }
+            .setNegativeButton("Cancelar", null)
+            .show()
+    }
+
+    /** Informações do app: versão, número da compilação, tipo (release ou debug) e créditos. */
+    @Suppress("DEPRECATION")
+    private fun aboutCard(): View {
+        val info = try { packageManager.getPackageInfo(packageName, 0) } catch (e: Exception) { null }
+        val versionName = info?.versionName ?: "?"
+        val build = when {
+            info == null -> "?"
+            Build.VERSION.SDK_INT >= 28 -> info.longVersionCode.toString()
+            else -> info.versionCode.toString()
+        }
+        val isDebug = (applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0
+        val type = if (isDebug) "Debug (versão de testes)" else "Release"
+
+        val card = TextView(this)
+        card.textSize = 14f
+        card.setTextColor(p.text)
+        card.setLineSpacing(0f, 1.2f)
+        card.setPadding(dp(16), dp(14), dp(16), dp(14))
+        card.background = android.graphics.drawable.GradientDrawable().apply {
+            cornerRadius = dp(12).toFloat()
+            setColor(p.surface)
+        }
+        card.text = "Offline Music\n" +
+            "Versão: $versionName\n" +
+            "Compilação: $build\n" +
+            "Tipo: $type\n\n" +
+            CREDITS
+        return card
     }
 
     private fun openSoundSettings() {
@@ -91,8 +177,13 @@ class SettingsActivity : Activity() {
             try {
                 startActivity(Intent(Settings.ACTION_SETTINGS))
             } catch (e2: ActivityNotFoundException) {
-                Toast.makeText(this, "Não foi possível abrir as configurações.", Toast.LENGTH_LONG).show()
+                Ui.toast(this, "Não foi possível abrir as configurações.", long = true)
             }
         }
+    }
+
+    companion object {
+        // Texto dos créditos: edite aqui se quiser mudar.
+        private const val CREDITS = "Criado por NightmareG15.\nCódigo feito com ajuda de IA (ChatGPT e Claude)."
     }
 }

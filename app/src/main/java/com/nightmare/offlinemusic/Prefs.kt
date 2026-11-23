@@ -19,6 +19,19 @@ object Prefs {
     fun isDark(ctx: Context): Boolean = p(ctx).getBoolean("dark", true)
     fun setDark(ctx: Context, value: Boolean) = p(ctx).edit().putBoolean("dark", value).apply()
 
+    // Pausar a música quando o fone for desconectado: o padrão é LIGADO.
+    fun pauseOnUnplug(ctx: Context): Boolean = p(ctx).getBoolean("pause_on_unplug", true)
+    fun setPauseOnUnplug(ctx: Context, value: Boolean) = p(ctx).edit().putBoolean("pause_on_unplug", value).apply()
+
+    /**
+     * Volta as configurações para o padrão (tema escuro, pausar ao desconectar o fone) e remove a imagem de fundo.
+     * Playlists e nomes personalizados NÃO são apagados.
+     */
+    fun resetSettings(ctx: Context) {
+        p(ctx).edit().remove("dark").remove("pause_on_unplug").apply()
+        wallpaperFile(ctx).delete()
+    }
+
     fun shuffle(ctx: Context): Boolean = p(ctx).getBoolean("shuffle", false)
     fun setShuffle(ctx: Context, value: Boolean) = p(ctx).edit().putBoolean("shuffle", value).apply()
 

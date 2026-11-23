@@ -21,7 +21,6 @@ import android.widget.Button
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
-import android.widget.Toast
 import java.io.File
 import java.io.FileOutputStream
 
@@ -107,7 +106,7 @@ class CropActivity : Activity() {
                 if (isFinishing || isDestroyed) {
                     loaded?.recycle()
                 } else if (loaded == null) {
-                    Toast.makeText(this, "Não foi possível abrir essa imagem.", Toast.LENGTH_LONG).show()
+                    Ui.toast(this, "Não foi possível abrir essa imagem.", long = true)
                     setResult(RESULT_CANCELED)
                     finish()
                 } else {
@@ -171,7 +170,7 @@ class CropActivity : Activity() {
     private fun saveCrop() {
         val cropped = cropView.renderCrop()
         if (cropped == null) {
-            Toast.makeText(this, "Não foi possível salvar a imagem.", Toast.LENGTH_LONG).show()
+            Ui.toast(this, "Não foi possível salvar a imagem.", long = true)
             return
         }
         useButton.isEnabled = false
@@ -193,7 +192,7 @@ class CropActivity : Activity() {
                     finish()
                 } else {
                     useButton.isEnabled = true
-                    Toast.makeText(this, "Não foi possível salvar a imagem.", Toast.LENGTH_LONG).show()
+                    Ui.toast(this, "Não foi possível salvar a imagem.", long = true)
                 }
             }
         }.start()

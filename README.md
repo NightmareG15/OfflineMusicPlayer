@@ -18,6 +18,9 @@ Player Android nativo, simples e offline, feito em Kotlin sem bibliotecas de ter
 - Imagem de fundo opcional (botão de imagem no topo da tela), mantida só enquanto o app está visível para poupar memória.
 - Tema Escuro (padrão) ou Claro, nas configurações.
 - Atalho nas configurações para as configurações de som do Android.
+- Opção para ligar/desligar a pausa automática ao desconectar o fone (ligada por padrão).
+- Botão para redefinir as configurações ao padrão (não apaga playlists nem nomes personalizados).
+- Seção "Sobre o app" com versão, número da compilação, tipo (release ou debug) e créditos.
 - Sem conta, rede, anúncios, streaming ou download de capas.
 
 ## Requisitos para compilar localmente

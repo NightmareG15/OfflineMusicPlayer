@@ -7,6 +7,7 @@ import android.graphics.drawable.GradientDrawable
 import android.os.Build
 import android.util.TypedValue
 import android.view.View
+import android.widget.Toast
 import android.view.WindowInsetsController
 import android.widget.Button
 import android.widget.ImageButton
@@ -65,6 +66,28 @@ object Ui {
                 v = if (p.dark) v and View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR.inv() else v or View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR
             }
             window.decorView.systemUiVisibility = v
+        }
+    }
+
+    /** Aviso rápido na tela. */
+    fun toast(ctx: Context, text: String, long: Boolean = false) {
+        Toast.makeText(ctx, text, if (long) Toast.LENGTH_LONG else Toast.LENGTH_SHORT).show()
+    }
+
+    /**
+     * Android 15+ desenha o app por baixo das barras do sistema (e o teclado também entra na conta):
+     * soma o tamanho delas ao espaçamento de [target] para nada ficar escondido.
+     */
+    @Suppress("DEPRECATION")
+    fun padForSystemBars(root: View, target: View, left: Int, top: Int, right: Int, bottom: Int) {
+        root.setOnApplyWindowInsetsListener { _, insets ->
+            target.setPadding(
+                left + insets.systemWindowInsetLeft,
+                top + insets.systemWindowInsetTop,
+                right + insets.systemWindowInsetRight,
+                bottom + insets.systemWindowInsetBottom
+            )
+            insets
         }
     }
 
