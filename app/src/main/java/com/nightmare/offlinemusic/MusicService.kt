@@ -16,7 +16,6 @@ import android.media.MediaMetadata
 import android.media.MediaPlayer
 import android.media.session.MediaSession
 import android.media.session.PlaybackState
-import android.net.Uri
 import android.os.Binder
 import android.os.Build
 import android.os.IBinder
@@ -30,9 +29,10 @@ class MusicService : Service() {
     private var prepared = false
 
     // Fila de músicas (na ordem em que aparecem na tela)
-    private var uris: List<String> = emptyList()
-    private var titles: List<String> = emptyList()
-    private var artists: List<String> = emptyList()
+    // Guardamos só o número (id) de cada música; o endereço é montado na hora de tocar.
+    private var ids = LongArray(0)
+    private var titles = ArrayList<String>()
+    private var artists = ArrayList<String>()
 
     // Ordem de reprodução (muda quando o modo aleatório está ligado) e posição nela
     private var order = ArrayList<Int>()
@@ -127,13 +127,13 @@ class MusicService : Service() {
     // ---- Funções usadas pela tela, pela notificação e pelos botões do fone ----
 
     /** Define a fila e começa a tocar a música [startIndex]. A fila vem direto da tela (sem limite de tamanho). */
-    fun setQueue(newUris: List<String>, newTitles: List<String>, newArtists: List<String>, startIndex: Int) {
-        if (newUris.isEmpty()) return
-        uris = newUris          // a tela entrega listas novas e não as altera depois
+    fun setQueue(newIds: LongArray, newTitles: ArrayList<String>, newArtists: ArrayList<String>, startIndex: Int) {
+        if (newIds.isEmpty()) return
+        ids = newIds            // a tela entrega listas novas e não as altera depois
         titles = newTitles
         artists = newArtists
         errorStreak = 0
-        buildOrder(startIndex.coerceIn(0, uris.size - 1))
+        buildOrder(startIndex.coerceIn(0, ids.size - 1))
         // Garante que o serviço continue vivo (em primeiro plano) mesmo com a tela fechada.
         val keepAlive = Intent(this, MusicService::class.java)
         if (Build.VERSION.SDK_INT >= 26) startForegroundService(keepAlive) else startService(keepAlive)
@@ -142,7 +142,23 @@ class MusicService : Service() {
 
     fun currentTitle(): String? = if (player != null) titles.getOrNull(index) else null
 
-    fun currentUri(): String? = if (player != null) uris.getOrNull(index) else null
+    /** Número (id) da música atual, ou -1 se nada estiver carregado. */
+    fun currentId(): Long = if (player != null && index < ids.size) ids[index] else -1L
+
+    /** O usuário renomeou uma música (só dentro do app): atualiza a fila e a notificação. */
+    fun renameTrack(id: Long, newTitle: String) {
+        var changedCurrent = false
+        for (i in ids.indices) {
+            if (ids[i] == id && i < titles.size) {
+                titles[i] = newTitle
+                if (i == index) changedCurrent = true
+            }
+        }
+        if (changedCurrent && player != null) {
+            updateMetadata()
+            updateNotification()
+        }
+    }
 
     fun isPlayingNow(): Boolean = playing
 
@@ -185,7 +201,7 @@ class MusicService : Service() {
     fun next() = advance(auto = false)
 
     fun previous() {
-        if (uris.isEmpty()) return
+        if (ids.isEmpty()) return
         // Padrão dos players: se já passou de 3 segundos, "anterior" volta ao início da música.
         if (positionMs() > 3000) { seekTo(0); return }
         pos = if (pos <= 0) order.lastIndex else pos - 1
@@ -195,7 +211,7 @@ class MusicService : Service() {
     fun setShuffle(on: Boolean) {
         shuffle = on
         Prefs.setShuffle(this, on)
-        if (uris.isNotEmpty()) buildOrder(index)
+        if (ids.isNotEmpty()) buildOrder(index)
     }
 
     fun setRepeat(mode: Int) {
@@ -209,7 +225,7 @@ class MusicService : Service() {
     /** Monta a ordem de reprodução. Com aleatório ligado, a música [start] vem primeiro. */
     private fun buildOrder(start: Int) {
         val rest = ArrayList<Int>()
-        for (i in uris.indices) if (i != start) rest.add(i)
+        for (i in ids.indices) if (i != start) rest.add(i)
         if (shuffle) {
             rest.shuffle()
             order = ArrayList()
@@ -218,13 +234,13 @@ class MusicService : Service() {
             pos = 0
         } else {
             order = ArrayList()
-            for (i in uris.indices) order.add(i)
+            for (i in ids.indices) order.add(i)
             pos = start
         }
     }
 
     private fun advance(auto: Boolean) {
-        if (uris.isEmpty()) return
+        if (ids.isEmpty()) return
         if (pos + 1 < order.size) {
             pos++
         } else {
@@ -233,7 +249,7 @@ class MusicService : Service() {
             if (shuffle) {
                 val last = index
                 val again = ArrayList<Int>()
-                for (i in uris.indices) again.add(i)
+                for (i in ids.indices) again.add(i)
                 again.shuffle()
                 if (again.size > 1 && again[0] == last) {
                     val tmp = again[0]
@@ -248,7 +264,7 @@ class MusicService : Service() {
     }
 
     private fun playCurrent() {
-        if (uris.isEmpty()) { stopPlayback(); return }
+        if (ids.isEmpty()) { stopPlayback(); return }
         playing = false
         prepared = false
         pausedByFocusLoss = false
@@ -262,7 +278,7 @@ class MusicService : Service() {
         try {
             mp.setWakeMode(applicationContext, PowerManager.PARTIAL_WAKE_LOCK)
             mp.setAudioAttributes(audioAttrs)
-            mp.setDataSource(this, Uri.parse(uris[index]))
+            mp.setDataSource(this, Media.uriFor(ids[index]))
             mp.isLooping = (repeatMode == REPEAT_ONE)
             mp.setOnPreparedListener { ready ->
                 prepared = true
@@ -276,7 +292,7 @@ class MusicService : Service() {
             mp.setOnErrorListener { _, _, _ ->
                 // Arquivo com problema: pula para o próximo (e para se todos falharem).
                 errorStreak++
-                if (errorStreak >= uris.size) stopPlayback() else advance(auto = false)
+                if (errorStreak >= ids.size) stopPlayback() else advance(auto = false)
                 true
             }
             player = mp
@@ -287,7 +303,7 @@ class MusicService : Service() {
             mp.release()
             player = null
             errorStreak++
-            if (errorStreak >= uris.size) stopPlayback() else advance(auto = false)
+            if (errorStreak >= ids.size) stopPlayback() else advance(auto = false)
         }
     }
 

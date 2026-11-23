@@ -29,12 +29,39 @@ object Prefs {
     fun wallpaperFile(ctx: Context): File = File(ctx.filesDir, WALLPAPER_FILE)
     fun hasWallpaper(ctx: Context): Boolean = wallpaperFile(ctx).exists()
 
+    // ---- Nomes personalizados (só dentro do app; o arquivo da música não é alterado) ----
+
+    fun loadCustomTitles(ctx: Context): HashMap<Long, String> {
+        val result = HashMap<Long, String>()
+        try {
+            val obj = JSONObject(p(ctx).getString("custom_titles", "{}") ?: "{}")
+            val keys = obj.keys()
+            while (keys.hasNext()) {
+                val key = keys.next()
+                val id = key.toLongOrNull() ?: continue
+                result[id] = obj.getString(key)
+            }
+        } catch (e: Exception) {
+            // Dado corrompido: ignora e segue com os nomes originais.
+        }
+        return result
+    }
+
+    /** Guarda o nome escolhido para a música [id]; com [title] nulo, volta ao nome original. */
+    fun setCustomTitle(ctx: Context, id: Long, title: String?) {
+        val map = loadCustomTitles(ctx)
+        if (title == null) map.remove(id) else map[id] = title
+        val obj = JSONObject()
+        for ((key, value) in map) obj.put(key.toString(), value)
+        p(ctx).edit().putString("custom_titles", obj.toString()).apply()
+    }
+
     // ---- Playlists ----
 
     fun loadPlaylists(ctx: Context): MutableList<Playlist> {
         val result = mutableListOf<Playlist>()
         try {
-            val array = JSONArray(p(ctx).getString("playlists", "[]"))
+            val array = JSONArray(p(ctx).getString("playlists", "[]") ?: "[]")
             for (i in 0 until array.length()) {
                 val obj = array.getJSONObject(i)
                 val idsJson = obj.getJSONArray("ids")

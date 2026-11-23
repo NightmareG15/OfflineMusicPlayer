@@ -5,6 +5,9 @@ Player Android nativo, simples e offline, feito em Kotlin sem bibliotecas de ter
 ## O que já está implementado
 
 - Leitura da biblioteca de áudio local pelo MediaStore (a lista se atualiza sozinha ao abrir o app).
+- Barra de pesquisa: filtra por nome, artista ou nome original, sem diferenciar maiúsculas nem acentos ("cancao" acha "Canção").
+- Renomear músicas só dentro do app (segure o dedo na música); o arquivo no aparelho nunca é alterado.
+- Ajuste manual da imagem de fundo: arraste e use o gesto de pinça antes de confirmar o enquadramento.
 - Reprodução, pausa, faixa anterior e próxima, com botões em formato de ícone.
 - Barra de progresso (toque ou arraste para avançar/voltar na música).
 - Modo aleatório e repetir (desligado, lista inteira ou uma faixa).
@@ -12,7 +15,7 @@ Player Android nativo, simples e offline, feito em Kotlin sem bibliotecas de ter
 - Reprodução em segundo plano por serviço em primeiro plano, com notificação de mídia.
 - Controle pelos botões do fone (play/pause, próxima, anterior), com fio ou Bluetooth.
 - Pausa automática quando o fone é desconectado.
-- Imagem de fundo opcional (botão de imagem no topo da tela).
+- Imagem de fundo opcional (botão de imagem no topo da tela), mantida só enquanto o app está visível para poupar memória.
 - Tema Escuro (padrão) ou Claro, nas configurações.
 - Atalho nas configurações para as configurações de som do Android.
 - Sem conta, rede, anúncios, streaming ou download de capas.
