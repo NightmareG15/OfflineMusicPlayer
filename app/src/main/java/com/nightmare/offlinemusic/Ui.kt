@@ -14,13 +14,18 @@ import android.widget.ImageButton
 
 /** Cores e pequenos "ajudantes" de tela, usados pela tela principal e pelas configurações. */
 object Ui {
+    /**
+     * [accent] é a cor dos botões preenchidos (#5A0F1A). Sobre o fundo escuro ela é escura demais para texto
+     * e ícones, então [highlight] é um tom mais claro do mesmo vermelho, usado para destaques nesses casos.
+     */
     class Palette(
         val dark: Boolean,
         val bg: Int,
         val surface: Int,
         val text: Int,
         val sub: Int,
-        val accent: Int
+        val accent: Int,
+        val highlight: Int
     )
 
     val DARK = Palette(
@@ -29,7 +34,8 @@ object Ui {
         surface = 0xFF1F1B29.toInt(),
         text = 0xFFEDEAF5.toInt(),
         sub = 0xFF9D97AB.toInt(),
-        accent = 0xFF9B7BFF.toInt()
+        accent = 0xFF5A0F1A.toInt(),
+        highlight = 0xFFE0647B.toInt()
     )
 
     val LIGHT = Palette(
@@ -38,7 +44,8 @@ object Ui {
         surface = 0xFFECE8F5.toInt(),
         text = 0xFF211D2B.toInt(),
         sub = 0xFF77717F.toInt(),
-        accent = 0xFF7656D6.toInt()
+        accent = 0xFF5A0F1A.toInt(),
+        highlight = 0xFF5A0F1A.toInt()
     )
 
     fun palette(ctx: Context): Palette = if (Prefs.isDark(ctx)) DARK else LIGHT
@@ -47,7 +54,7 @@ object Ui {
 
     /** Tema das caixas de diálogo (combina com o tema escolhido). */
     fun dialogTheme(p: Palette): Int =
-        if (p.dark) android.R.style.Theme_Material_Dialog_Alert else android.R.style.Theme_Material_Light_Dialog_Alert
+        if (p.dark) R.style.DialogDark else R.style.DialogLight
 
     /** Deixa a barra de status e a de navegação combinando com o tema. */
     @Suppress("DEPRECATION")

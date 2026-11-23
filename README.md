@@ -1,45 +1,49 @@
-# Offline Music Player
+# Veyra Player
 
-Player Android nativo, simples e offline, feito em Kotlin sem bibliotecas de terceiros.
+Reprodutor de música Android nativo, simples e offline, feito em Kotlin sem bibliotecas de terceiros.
+Sem anúncios, sem conta, sem internet. Pensado para ser leve e rodar bem em aparelhos simples.
 
 ## O que já está implementado
 
 - Leitura da biblioteca de áudio local pelo MediaStore (a lista se atualiza sozinha ao abrir o app).
-- Barra de pesquisa: filtra por nome, artista ou nome original, sem diferenciar maiúsculas nem acentos ("cancao" acha "Canção").
-- Renomear músicas só dentro do app (segure o dedo na música); o arquivo no aparelho nunca é alterado.
-- Ajuste manual da imagem de fundo: arraste e use o gesto de pinça antes de confirmar o enquadramento.
 - Reprodução, pausa, faixa anterior e próxima, com botões em formato de ícone.
+- Continuar de onde parou: o app lembra a última música e o ponto em que estava.
+- Timer para dormir (15, 30, 45 minutos, 1 hora ou 1h30), com o volume caindo aos poucos no final.
 - Barra de progresso (toque ou arraste para avançar/voltar na música).
 - Modo aleatório e repetir (desligado, lista inteira ou uma faixa).
+- Barra de pesquisa: filtra por nome, artista ou nome original, sem diferenciar maiúsculas nem acentos ("cancao" acha "Canção").
+- Ordenar a lista por nome, artista ou mais recentes.
 - Playlists simples: crie, renomeie e exclua listas; segure o dedo numa música para adicioná-la a uma lista.
-- Reprodução em segundo plano por serviço em primeiro plano, com notificação de mídia.
+- Renomear músicas dentro do app (segure o dedo na música); o arquivo no aparelho nunca é alterado.
+- Reprodução em segundo plano por serviço em primeiro plano, com notificação de mídia (anterior, tocar/pausar, próxima e fechar).
 - Controle pelos botões do fone (play/pause, próxima, anterior), com fio ou Bluetooth.
-- Pausa automática quando o fone é desconectado.
-- Imagem de fundo opcional (botão de imagem no topo da tela), mantida só enquanto o app está visível para poupar memória.
-- Tema Escuro (padrão) ou Claro, nas configurações.
+- Pausa automática quando o fone é desconectado (pode ser desligada nas configurações).
+- Tema Escuro (padrão) ou Claro, nas configurações, com fundo padrão do app.
 - Atalho nas configurações para as configurações de som do Android.
-- Opção para ligar/desligar a pausa automática ao desconectar o fone (ligada por padrão).
 - Botão para redefinir as configurações ao padrão (não apaga playlists nem nomes personalizados).
 - Seção "Sobre o app" com versão, número da compilação, tipo (release ou debug) e créditos.
-- Sem conta, rede, anúncios, streaming ou download de capas.
+- Tela sempre em modo retrato.
+
+## Gerar os APKs sem instalar Android SDK no seu PC
+
+O projeto inclui o workflow `.github/workflows/build-apk.yml`. Abra a aba **Actions** do repositório e execute
+**Build Android APK** (ele também roda sozinho a cada envio de arquivos). Ao terminar, baixe na execução:
+
+- `VeyraPlayer-debug`: APK de testes (a "garantia").
+- `VeyraPlayer-release`: APK enxuto (código e recursos sem uso removidos), que tende a usar menos memória.
+
+Os dois são assinados com a mesma chave (`app/signing/veyra.jks`), então uma versão nova instala por cima da anterior
+sem apagar playlists nem configurações. Atenção: essa chave é pública (está no repositório) e serve para uso pessoal.
+Para publicar em loja, use uma chave privada.
 
 ## Requisitos para compilar localmente
 
-- Android Studio recente.
-- JDK 17.
-- Android SDK Platform 35 (o Android Studio pode instalar isso pelo SDK Manager).
+- Android Studio recente, JDK 17 e Android SDK Platform 35.
 
-Abra a pasta do projeto no Android Studio e aguarde a sincronização do Gradle. Depois use **Build > Build Bundle(s) / APK(s) > Build APK(s)**.
-
-O APK de depuração será criado em `app/build/outputs/apk/debug/app-debug.apk`.
-
-## Gerar APK sem instalar Android SDK no seu PC
-
-O projeto inclui o workflow `.github/workflows/build-apk.yml`. Abra a aba **Actions** do repositório e execute **Build Android APK** (ele também roda sozinho a cada envio de arquivos). Ao terminar, baixe o artefato `offline-music-debug-apk` na execução. Isso usa os servidores do GitHub para compilar.
+Abra a pasta do projeto, aguarde a sincronização do Gradle e use **Build > Build Bundle(s) / APK(s) > Build APK(s)**.
 
 ## Observações
 
-- O Android solicitará permissão para acessar arquivos de áudio.
-- Em Android 13 ou superior, também poderá solicitar permissão para mostrar notificações.
-- A compatibilidade exata depende do codec interno do aparelho. Arquivos MP3, WAV PCM e OGG Vorbis padrão são os alvos; formatos encapsulados ou codecs incomuns podem não tocar.
-- Ainda não inclui busca, equalizador, letras ou download de capas.
+- O Android solicitará permissão para acessar arquivos de áudio e, no Android 13 ou superior, para mostrar notificações.
+- A compatibilidade exata depende do codec do aparelho. MP3, WAV e OGG são os alvos.
+- Ainda não inclui equalizador, letras nem capas de álbum, de propósito, para continuar leve.

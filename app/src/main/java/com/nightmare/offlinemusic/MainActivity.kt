@@ -3,7 +3,6 @@ package com.nightmare.offlinemusic
 import android.Manifest
 import android.app.Activity
 import android.app.AlertDialog
-import android.content.ActivityNotFoundException
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
@@ -27,6 +26,7 @@ import android.os.Looper
 import android.provider.MediaStore
 import android.text.Editable
 import android.text.InputType
+import android.text.TextUtils
 import android.text.TextWatcher
 import android.view.ContextThemeWrapper
 import android.view.Gravity
@@ -47,10 +47,10 @@ import android.widget.TextView
 import java.text.Normalizer
 
 /**
- * Uma música da lista. [title] é o nome mostrado (pode ter sido renomeado só no app);
- * [original] é o título que está gravado no arquivo (nunca é alterado).
+ * Uma música da lista. [title] é o nome mostrado (pode ter sido renomeado dentro do app);
+ * [original] é o título gravado no arquivo (nunca é alterado); [added] é a data em que foi adicionada ao aparelho.
  */
-private data class Track(val id: Long, val title: String, val artist: String, val original: String) {
+private data class Track(val id: Long, val title: String, val artist: String, val original: String, val added: Long) {
     override fun toString(): String =
         if (artist.isBlank() || artist == "<unknown>") title else "$title  —  $artist"
 }
@@ -78,6 +78,7 @@ class MainActivity : Activity() {
     private lateinit var emptyText: TextView
     private lateinit var searchInput: EditText
     private lateinit var clearSearch: ImageButton
+    private lateinit var timerButton: ImageButton
     private lateinit var nowPlaying: TextView
     private lateinit var viewLabel: TextView
     private lateinit var playButton: ImageButton
@@ -93,12 +94,14 @@ class MainActivity : Activity() {
     private var seeking = false
     private var lastPosSec = -1
     private var lastDurSec = -1
+    private var timerShownActive: Boolean? = null
     private val handler = Handler(Looper.getMainLooper())
 
     private val ticker = object : Runnable {
         override fun run() {
             if (musicService?.isPlayingNow() == true) updateProgress()
-            handler.postDelayed(this, 500)
+            refreshTimerIcon()
+            handler.postDelayed(this, 1000)
         }
     }
 
@@ -210,35 +213,36 @@ class MainActivity : Activity() {
         content.isFocusable = true
         content.isFocusableInTouchMode = true
         root.addView(content, FrameLayout.LayoutParams(-1, -1))
-
         Ui.padForSystemBars(root, content, baseLeft, baseTop, baseRight, baseBottom)
 
-        // ---- Topo: título + botões (listas, imagem de fundo, configurações)
+        // ---- Topo: título + botões (listas, timer, configurações)
         val header = LinearLayout(this)
         header.orientation = LinearLayout.HORIZONTAL
         header.gravity = Gravity.CENTER_VERTICAL
         val heading = TextView(this)
-        heading.text = "Offline Music"
+        heading.text = getString(R.string.app_name)
         heading.textSize = 22f
         heading.setTextColor(p.text)
         heading.setTypeface(null, Typeface.BOLD)
+        heading.maxLines = 1
+        heading.ellipsize = TextUtils.TruncateAt.END
         header.addView(heading, LinearLayout.LayoutParams(0, -2, 1f))
         val playlistsButton = Ui.iconButton(this, R.drawable.ic_playlist, p.text, "Listas")
         playlistsButton.setOnClickListener { showPlaylistsDialog() }
-        val wallpaperButton = Ui.iconButton(this, R.drawable.ic_image, p.text, "Imagem de fundo")
-        wallpaperButton.setOnClickListener { showWallpaperMenu() }
+        timerButton = Ui.iconButton(this, R.drawable.ic_timer, p.text, "Timer para dormir")
+        timerButton.setOnClickListener { showTimerDialog() }
         val settingsButton = Ui.iconButton(this, R.drawable.ic_settings, p.text, "Configurações")
         settingsButton.setOnClickListener { startActivity(Intent(this, SettingsActivity::class.java)) }
-        header.addView(playlistsButton, LinearLayout.LayoutParams(dp(44), dp(44)))
-        header.addView(wallpaperButton, LinearLayout.LayoutParams(dp(44), dp(44)))
-        header.addView(settingsButton, LinearLayout.LayoutParams(dp(44), dp(44)))
+        header.addView(playlistsButton, LinearLayout.LayoutParams(dp(42), dp(42)))
+        header.addView(timerButton, LinearLayout.LayoutParams(dp(42), dp(42)))
+        header.addView(settingsButton, LinearLayout.LayoutParams(dp(42), dp(42)))
 
         viewLabel = TextView(this)
         viewLabel.textSize = 13f
         viewLabel.setTextColor(p.sub)
         viewLabel.setPadding(0, dp(2), 0, dp(8))
 
-        // ---- Barra de pesquisa
+        // ---- Barra de pesquisa (com botão de ordenar)
         val searchRow = LinearLayout(this)
         searchRow.orientation = LinearLayout.HORIZONTAL
         searchRow.gravity = Gravity.CENTER_VERTICAL
@@ -276,9 +280,12 @@ class MainActivity : Activity() {
         clearSearch = Ui.iconButton(this, R.drawable.ic_close, p.sub, "Limpar pesquisa")
         clearSearch.visibility = View.GONE
         clearSearch.setOnClickListener { searchInput.setText("") }
+        val sortButton = Ui.iconButton(this, R.drawable.ic_sort, p.sub, "Ordenar")
+        sortButton.setOnClickListener { showSortDialog() }
         searchRow.addView(searchIcon, LinearLayout.LayoutParams(dp(20), dp(20)))
         searchRow.addView(searchInput, LinearLayout.LayoutParams(0, dp(44), 1f).apply { leftMargin = dp(8) })
         searchRow.addView(clearSearch, LinearLayout.LayoutParams(dp(40), dp(40)))
+        searchRow.addView(sortButton, LinearLayout.LayoutParams(dp(40), dp(40)))
 
         nowPlaying = TextView(this)
         nowPlaying.text = "Escolha uma música para começar"
@@ -296,7 +303,7 @@ class MainActivity : Activity() {
                 val row = super.getView(position, convertView, parent) as TextView
                 val track = getItem(position)
                 val isCurrent = track != null && track.id == playingId
-                row.setTextColor(if (isCurrent) p.accent else p.text)
+                row.setTextColor(if (isCurrent) p.highlight else p.text)
                 row.setTypeface(null, if (isCurrent) Typeface.BOLD else Typeface.NORMAL)
                 row.setBackgroundColor(Color.TRANSPARENT)
                 return row
@@ -343,8 +350,8 @@ class MainActivity : Activity() {
         timeTotal.textSize = 12f
         timeTotal.setTextColor(p.sub)
         seek = SeekBar(this)
-        seek.progressTintList = ColorStateList.valueOf(p.accent)
-        seek.thumbTintList = ColorStateList.valueOf(p.accent)
+        seek.progressTintList = ColorStateList.valueOf(p.highlight)
+        seek.thumbTintList = ColorStateList.valueOf(p.highlight)
         seek.progressBackgroundTintList = ColorStateList.valueOf(p.sub)
         seek.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(bar: SeekBar?, progress: Int, fromUser: Boolean) {
@@ -377,7 +384,7 @@ class MainActivity : Activity() {
         playButton.background = circle
         val playPad = dp(16)
         playButton.setPadding(playPad, playPad, playPad, playPad)
-        playButton.setOnClickListener { musicService?.togglePlayback() }
+        playButton.setOnClickListener { onPlayPressed() }
         val nextButton = Ui.iconButton(this, R.drawable.ic_next, p.text, "Próxima")
         nextButton.setOnClickListener { musicService?.next() }
         repeatButton = Ui.iconButton(this, R.drawable.ic_repeat, p.sub, "Repetir")
@@ -408,10 +415,23 @@ class MainActivity : Activity() {
         content.requestFocus()
     }
 
+    /** Texto do cartão quando nada está tocando: oferece continuar a última música, se houver. */
+    private fun idleText(): String {
+        val lastId = Prefs.lastId(this)
+        if (loadedOnce && lastId >= 0) {
+            val track = allTracks.firstOrNull { it.id == lastId }
+            if (track != null) {
+                val seconds = Prefs.lastPosition(this) / 1000
+                return if (seconds > 0) "Continuar: ${track.title} (${formatTime(seconds)})" else "Continuar: ${track.title}"
+            }
+        }
+        return "Escolha uma música para começar"
+    }
+
     /** Atualiza o texto da música atual, o botão tocar/pausar e o destaque na lista. */
     private fun render(title: String?, playing: Boolean) {
         nowPlaying.text = when {
-            title == null -> "Escolha uma música para começar"
+            title == null -> idleText()
             playing -> "Tocando: $title"
             else -> "Pausado: $title"
         }
@@ -421,6 +441,7 @@ class MainActivity : Activity() {
         lastPosSec = -1
         lastDurSec = -1
         updateProgress()
+        refreshTimerIcon()
     }
 
     private fun refreshEmptyText() {
@@ -441,7 +462,7 @@ class MainActivity : Activity() {
         val max = if (duration > 0) duration else 1
         if (seek.max != max) seek.max = max
         seek.progress = if (duration > 0) position else 0
-        // Os textos só são refeitos quando o segundo muda (evita criar texto à toa a cada 0,5 s).
+        // Os textos só são refeitos quando o segundo muda (evita criar texto à toa).
         val posSec = position / 1000
         if (posSec != lastPosSec) { lastPosSec = posSec; timeCurrent.text = formatTime(posSec) }
         val durSec = duration / 1000
@@ -451,14 +472,68 @@ class MainActivity : Activity() {
     private fun formatTime(totalSeconds: Int): String =
         "${totalSeconds / 60}:${(totalSeconds % 60).toString().padStart(2, '0')}"
 
-    // ------------------------------------------------------------------ aleatório e repetir
+    // ------------------------------------------------------------------ tocar, continuar e controles
+
+    private fun onPlayPressed() {
+        val service = musicService ?: return
+        if (service.currentTitle() != null) service.togglePlayback() else resumeLast()
+    }
+
+    /** Monta a fila com [list] e começa a tocar a música [index], a partir de [positionMs]. */
+    private fun startQueue(list: List<Track>, index: Int, positionMs: Int, context: String?) {
+        val service = musicService
+        if (service == null) {
+            Ui.toast(this, "Aguarde um instante e tente de novo.")
+            return
+        }
+        val count = list.size
+        val ids = LongArray(count)
+        val titles = ArrayList<String>(count)
+        val artists = ArrayList<String>(count)
+        for (i in 0 until count) {
+            val t = list[i]
+            ids[i] = t.id
+            titles.add(t.title)
+            artists.add(t.artist)
+        }
+        service.setQueue(ids, titles, artists, index, positionMs, context)
+        nowPlaying.text = "Carregando: ${list[index].title}"
+    }
+
+    private fun playTrack(position: Int) {
+        if (position !in shown.indices) return
+        startQueue(shown, position, 0, currentPlaylist)
+    }
+
+    /** "Continuar de onde parou": volta à última música, no ponto em que estava. */
+    private fun resumeLast() {
+        val lastId = Prefs.lastId(this)
+        var context = Prefs.lastContext(this)
+        var list: List<Track> = tracksOf(context) ?: allTracks
+        var index = if (lastId >= 0) list.indexOfFirst { it.id == lastId } else -1
+        var position = Prefs.lastPosition(this)
+        if (index < 0 && list !== allTracks) {
+            list = allTracks
+            context = null
+            index = allTracks.indexOfFirst { it.id == lastId }
+        }
+        if (index < 0) {
+            // Nada salvo (ou a música foi apagada do aparelho): começa pela primeira da lista na tela.
+            if (shown.isEmpty()) return
+            list = shown
+            context = currentPlaylist
+            index = 0
+            position = 0
+        }
+        startQueue(list, index, position, context)
+    }
 
     private fun refreshModeButtons() {
         val shuffleOn = Prefs.shuffle(this)
-        shuffleButton.setColorFilter(if (shuffleOn) p.accent else p.sub)
+        shuffleButton.setColorFilter(if (shuffleOn) p.highlight else p.sub)
         val mode = Prefs.repeatMode(this)
         repeatButton.setImageResource(if (mode == MusicService.REPEAT_ONE) R.drawable.ic_repeat_one else R.drawable.ic_repeat)
-        repeatButton.setColorFilter(if (mode == MusicService.REPEAT_OFF) p.sub else p.accent)
+        repeatButton.setColorFilter(if (mode == MusicService.REPEAT_OFF) p.sub else p.highlight)
     }
 
     private fun toggleShuffle() {
@@ -482,9 +557,87 @@ class MainActivity : Activity() {
         Ui.toast(this, text)
     }
 
-    // ------------------------------------------------------------------ biblioteca
+    // ------------------------------------------------------------------ timer para dormir
 
-    private val titleOrder = Comparator<Track> { a, b -> String.CASE_INSENSITIVE_ORDER.compare(a.title, b.title) }
+    private fun refreshTimerIcon() {
+        val active = (musicService?.sleepRemainingMs() ?: 0L) > 0L
+        if (timerShownActive == active) return
+        timerShownActive = active
+        timerButton.setColorFilter(if (active) p.highlight else p.text)
+    }
+
+    private fun showTimerDialog() {
+        val service = musicService
+        if (service == null || service.currentTitle() == null) {
+            Ui.toast(this, "Toque uma música primeiro para usar o timer.")
+            return
+        }
+        val remaining = service.sleepRemainingMs()
+        val options = intArrayOf(15, 30, 45, 60, 90)
+        val labels = ArrayList<String>()
+        if (remaining > 0) labels.add("Desativar timer")
+        for (minutes in options) labels.add(minutesLabel(minutes))
+        val title = if (remaining > 0) "Timer para dormir (faltam ${(remaining + 59_999) / 60_000} min)" else "Timer para dormir"
+        dialog()
+            .setTitle(title)
+            .setItems(labels.toTypedArray()) { _, which ->
+                val offset = if (remaining > 0) 1 else 0
+                if (remaining > 0 && which == 0) {
+                    service.cancelSleepTimer()
+                    Ui.toast(this, "Timer desativado.")
+                } else {
+                    val minutes = options[which - offset]
+                    service.startSleepTimer(minutes)
+                    Ui.toast(this, "A música vai parar em ${minutesLabel(minutes)}.")
+                }
+                refreshTimerIcon()
+            }
+            .setNegativeButton("Cancelar", null)
+            .show()
+    }
+
+    private fun minutesLabel(minutes: Int): String = when (minutes) {
+        60 -> "1 hora"
+        90 -> "1 hora e 30 min"
+        else -> "$minutes minutos"
+    }
+
+    // ------------------------------------------------------------------ biblioteca e ordem da lista
+
+    private fun currentOrder(): Comparator<Track> {
+        val byTitle = Comparator<Track> { a, b -> String.CASE_INSENSITIVE_ORDER.compare(a.title, b.title) }
+        return when (Prefs.sortMode(this)) {
+            Prefs.SORT_ARTIST -> Comparator { a, b ->
+                val aUnknown = a.artist.isBlank() || a.artist == "<unknown>"
+                val bUnknown = b.artist.isBlank() || b.artist == "<unknown>"
+                if (aUnknown != bUnknown) {
+                    if (aUnknown) 1 else -1   // músicas sem artista ficam no fim
+                } else {
+                    val byArtist = String.CASE_INSENSITIVE_ORDER.compare(a.artist, b.artist)
+                    if (byArtist != 0) byArtist else byTitle.compare(a, b)
+                }
+            }
+            Prefs.SORT_RECENT -> Comparator { a, b ->
+                val byDate = b.added.compareTo(a.added)   // mais novas primeiro
+                if (byDate != 0) byDate else byTitle.compare(a, b)
+            }
+            else -> byTitle
+        }
+    }
+
+    private fun showSortDialog() {
+        val labels = arrayOf("Nome (A–Z)", "Artista (A–Z)", "Mais recentes")
+        dialog()
+            .setTitle("Ordenar por")
+            .setSingleChoiceItems(labels, Prefs.sortMode(this)) { dlg, which ->
+                Prefs.setSortMode(this, which)
+                allTracks.sortWith(currentOrder())
+                rebuildBase()
+                dlg.dismiss()
+            }
+            .setNegativeButton("Cancelar", null)
+            .show()
+    }
 
     private fun loadTracks() {
         if (loading) return
@@ -498,6 +651,7 @@ class MainActivity : Activity() {
                     allTracks.addAll(result)
                     loadedOnce = true
                     rebuildBase()
+                    if (musicService?.currentTitle() == null) nowPlaying.text = idleText()
                 }
             }
         }.start()
@@ -509,7 +663,8 @@ class MainActivity : Activity() {
         val projection = arrayOf(
             MediaStore.Audio.Media._ID,
             MediaStore.Audio.Media.TITLE,
-            MediaStore.Audio.Media.ARTIST
+            MediaStore.Audio.Media.ARTIST,
+            MediaStore.Audio.Media.DATE_ADDED
         )
         val selection = "${MediaStore.Audio.Media.IS_MUSIC} != 0"
         val customTitles = Prefs.loadCustomTitles(this)
@@ -522,31 +677,34 @@ class MainActivity : Activity() {
             val idCol = it.getColumnIndexOrThrow(MediaStore.Audio.Media._ID)
             val titleCol = it.getColumnIndexOrThrow(MediaStore.Audio.Media.TITLE)
             val artistCol = it.getColumnIndexOrThrow(MediaStore.Audio.Media.ARTIST)
+            val addedCol = it.getColumnIndexOrThrow(MediaStore.Audio.Media.DATE_ADDED)
             while (it.moveToNext()) {
                 val id = it.getLong(idCol)
                 val original = it.getString(titleCol) ?: "Faixa sem título"
                 val artist = it.getString(artistCol) ?: ""
-                result.add(Track(id, customTitles[id] ?: original, artist, original))
+                result.add(Track(id, customTitles[id] ?: original, artist, original, it.getLong(addedCol)))
             }
         }
-        result.sortWith(titleOrder)
+        result.sortWith(currentOrder())
         return result
+    }
+
+    /** As músicas de uma playlist (na ordem em que foram adicionadas), ou todas se [name] for nulo. Nulo se a lista não existir. */
+    private fun tracksOf(name: String?): List<Track>? {
+        if (name == null) return allTracks
+        val playlist = Prefs.loadPlaylists(this).firstOrNull { it.name == name } ?: return null
+        val byId = HashMap<Long, Track>(allTracks.size * 2)
+        for (t in allTracks) byId[t.id] = t
+        val ordered = ArrayList<Track>(playlist.ids.size)
+        for (id in playlist.ids) byId[id]?.let { ordered.add(it) }
+        return ordered
     }
 
     /** Define a base da lista (todas as músicas ou uma playlist) e aplica a pesquisa. */
     private fun rebuildBase() {
-        val name = currentPlaylist
-        val playlist = if (name == null) null else Prefs.loadPlaylists(this).firstOrNull { it.name == name }
-        if (playlist == null) {
-            currentPlaylist = null
-            base = allTracks
-        } else {
-            val byId = HashMap<Long, Track>(allTracks.size * 2)
-            for (t in allTracks) byId[t.id] = t
-            val ordered = ArrayList<Track>(playlist.ids.size)
-            for (id in playlist.ids) byId[id]?.let { ordered.add(it) }
-            base = ordered
-        }
+        val tracks = tracksOf(currentPlaylist)
+        if (tracks == null) currentPlaylist = null
+        base = tracks ?: allTracks
         applyFilter()
     }
 
@@ -592,27 +750,6 @@ class MainActivity : Activity() {
         return out.toString()
     }
 
-    private fun playTrack(position: Int) {
-        if (position !in shown.indices) return
-        val service = musicService
-        if (service == null) {
-            Ui.toast(this, "Aguarde um instante e tente de novo.")
-            return
-        }
-        val count = shown.size
-        val ids = LongArray(count)
-        val titles = ArrayList<String>(count)
-        val artists = ArrayList<String>(count)
-        for (i in 0 until count) {
-            val t = shown[i]
-            ids[i] = t.id
-            titles.add(t.title)
-            artists.add(t.artist)
-        }
-        service.setQueue(ids, titles, artists, position)
-        nowPlaying.text = "Carregando: ${shown[position].title}"
-    }
-
     // ------------------------------------------------------------------ menu da música (segurar o dedo)
 
     private fun dialog(): AlertDialog.Builder = AlertDialog.Builder(this, Ui.dialogTheme(p))
@@ -627,8 +764,8 @@ class MainActivity : Activity() {
             labels.add("Remover desta lista")
             actions.add { removeFromCurrentPlaylist(track.id) }
         }
-        labels.add("Renomear (só no app)")
-        actions.add { askName("Renomear música (só no app)", track.title) { name -> applyTitle(track, name) } }
+        labels.add("Renomear")
+        actions.add { askName("Renomear música", track.title) { name -> applyTitle(track, name) } }
         if (track.title != track.original) {
             labels.add("Restaurar nome original")
             actions.add { applyTitle(track, null) }
@@ -647,11 +784,11 @@ class MainActivity : Activity() {
         val index = allTracks.indexOfFirst { it.id == track.id }
         if (index >= 0) {
             allTracks[index] = allTracks[index].copy(title = newTitle)
-            allTracks.sortWith(titleOrder)
+            allTracks.sortWith(currentOrder())
         }
         musicService?.renameTrack(track.id, newTitle)
         rebuildBase()
-        Ui.toast(this, "Nome alterado só dentro do app.")
+        Ui.toast(this, if (newName == null) "Nome original restaurado." else "Música renomeada.")
     }
 
     // ------------------------------------------------------------------ playlists
@@ -791,71 +928,28 @@ class MainActivity : Activity() {
             .show()
     }
 
-    // ------------------------------------------------------------------ imagem de fundo
+    // ------------------------------------------------------------------ imagem de fundo (fixa, vem dentro do app)
 
-    private fun showWallpaperMenu() {
-        val has = Prefs.hasWallpaper(this)
-        val items = if (has) arrayOf("Escolher outra imagem", "Remover imagem") else arrayOf("Escolher imagem")
-        dialog()
-            .setTitle("Imagem de fundo")
-            .setItems(items) { _, which ->
-                if (which == 0) pickImage() else removeWallpaper()
-            }
-            .setNegativeButton("Cancelar", null)
-            .show()
-    }
-
-    private fun pickImage() {
-        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT)
-        intent.addCategory(Intent.CATEGORY_OPENABLE)
-        intent.type = "image/*"
-        try {
-            startActivityForResult(intent, REQ_PICK)
-        } catch (e: ActivityNotFoundException) {
-            Ui.toast(this, "Nenhum app de galeria encontrado.", long = true)
-        }
-    }
-
-    @Deprecated("Deprecated in Java")
-    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
-        super.onActivityResult(requestCode, resultCode, data)
-        // Depois do ajuste (REQ_CROP), a imagem nova é carregada em onStart.
-        if (requestCode == REQ_PICK && resultCode == RESULT_OK) {
-            val uri = data?.data ?: return
-            val intent = Intent(this, CropActivity::class.java)
-            intent.data = uri
-            intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            startActivityForResult(intent, REQ_CROP)
-        }
-    }
-
-    private fun removeWallpaper() {
-        Prefs.wallpaperFile(this).delete()
-        applyWallpaper()
-    }
-
-    /** Mostra a imagem de fundo salva (já no tamanho da tela). A cor por cima mantém o texto legível. */
+    /** Mostra o fundo padrão. A cor por cima (mais leve no tema escuro) mantém o texto legível. */
     private fun applyWallpaper() {
-        freeWallpaper()
-        if (Prefs.hasWallpaper(this)) {
-            val options = BitmapFactory.Options()
-            options.inPreferredConfig = Bitmap.Config.RGB_565
-            val bitmap: Bitmap? = try {
-                BitmapFactory.decodeFile(Prefs.wallpaperFile(this).path, options)
-            } catch (e: OutOfMemoryError) {
-                null
-            }
-            if (bitmap != null) {
-                val veil = Color.argb(0xD0, Color.red(p.bg), Color.green(p.bg), Color.blue(p.bg))
-                wallpaperView.setImageBitmap(bitmap)
-                wallpaperView.colorFilter = PorterDuffColorFilter(veil, PorterDuff.Mode.SRC_OVER)
-                wallpaperView.visibility = View.VISIBLE
-                root.background = null   // com imagem, o fundo liso não precisa ser desenhado
-                return
-            }
+        val options = BitmapFactory.Options()
+        options.inPreferredConfig = Bitmap.Config.RGB_565
+        val bitmap: Bitmap? = try {
+            BitmapFactory.decodeResource(resources, R.drawable.wallpaper_default, options)
+        } catch (e: OutOfMemoryError) {
+            null
         }
-        wallpaperView.visibility = View.GONE
-        root.setBackgroundColor(p.bg)
+        if (bitmap != null) {
+            val alpha = if (p.dark) 0x94 else 0xD9   // ~58% no escuro, ~85% no claro
+            val veil = Color.argb(alpha, Color.red(p.bg), Color.green(p.bg), Color.blue(p.bg))
+            wallpaperView.setImageBitmap(bitmap)
+            wallpaperView.colorFilter = PorterDuffColorFilter(veil, PorterDuff.Mode.SRC_OVER)
+            wallpaperView.visibility = View.VISIBLE
+            root.background = null   // com imagem, o fundo liso não precisa ser desenhado
+        } else {
+            wallpaperView.visibility = View.GONE
+            root.setBackgroundColor(p.bg)
+        }
     }
 
     private fun freeWallpaper() {
@@ -865,7 +959,5 @@ class MainActivity : Activity() {
     companion object {
         private const val REQ_AUDIO = 10
         private const val REQ_NOTIFICATIONS = 20
-        private const val REQ_PICK = 30
-        private const val REQ_CROP = 31
     }
 }

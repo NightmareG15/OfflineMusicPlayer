@@ -5,6 +5,8 @@ import android.app.AlertDialog
 import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.content.pm.ApplicationInfo
+import android.content.res.ColorStateList
+import android.graphics.Color
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
@@ -93,7 +95,7 @@ class SettingsActivity : Activity() {
         val view = TextView(this)
         view.text = text
         view.textSize = 13f
-        view.setTextColor(p.accent)
+        view.setTextColor(p.highlight)
         view.setTypeface(null, android.graphics.Typeface.BOLD)
         view.setPadding(0, dp(24), 0, dp(8))
         return view
@@ -117,6 +119,10 @@ class SettingsActivity : Activity() {
         texts.addView(labelView)
         texts.addView(hintView)
         val toggle = Switch(this)
+        // Ligado: trilho vinho (#5A0F1A) com botão branco. Desligado: tons neutros.
+        val states = arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf())
+        toggle.thumbTintList = ColorStateList(states, intArrayOf(Color.WHITE, p.sub))
+        toggle.trackTintList = ColorStateList(states, intArrayOf(p.accent, p.surface))
         toggle.isChecked = checked
         toggle.setOnCheckedChangeListener { _, isOn -> onChange(isOn) }   // definido depois do estado inicial
         row.addView(texts, LinearLayout.LayoutParams(0, -2, 1f))
@@ -128,7 +134,7 @@ class SettingsActivity : Activity() {
         AlertDialog.Builder(this, Ui.dialogTheme(p))
             .setTitle("Redefinir configurações?")
             .setMessage(
-                "Remove a imagem de fundo e volta o tema (escuro) e a pausa ao desconectar o fone ao padrão.\n\n" +
+                "Volta o tema (escuro), a pausa ao desconectar o fone e a ordem da lista ao padrão.\n\n" +
                     "Suas playlists e os nomes personalizados das músicas NÃO são apagados."
             )
             .setPositiveButton("Redefinir") { _, _ ->
@@ -162,7 +168,7 @@ class SettingsActivity : Activity() {
             cornerRadius = dp(12).toFloat()
             setColor(p.surface)
         }
-        card.text = "Offline Music\n" +
+        card.text = getString(R.string.app_name) + "\n" +
             "Versão: $versionName\n" +
             "Compilação: $build\n" +
             "Tipo: $type\n\n" +

@@ -1,10 +1,18 @@
 <resources>
-    <!-- Tema padrão: ESCURO. As cores do tema Claro/Escuro escolhido nas configurações são aplicadas pelo código. -->
+    <!-- Tema padrão: ESCURO. O tema Claro/Escuro escolhido nas configurações é aplicado pelo código. -->
     <style name="AppTheme" parent="android:style/Theme.Material.NoActionBar">
         <item name="android:fontFamily">sans</item>
-        <item name="android:colorAccent">#9B7BFF</item>
+        <item name="android:colorAccent">#E0647B</item>
         <item name="android:statusBarColor">#121016</item>
         <item name="android:navigationBarColor">#121016</item>
         <item name="android:windowBackground">#121016</item>
+    </style>
+
+    <!-- Caixas de diálogo (menus, avisos) combinando com o tema escolhido -->
+    <style name="DialogDark" parent="android:style/Theme.Material.Dialog.Alert">
+        <item name="android:colorAccent">#E0647B</item>
+    </style>
+    <style name="DialogLight" parent="android:style/Theme.Material.Light.Dialog.Alert">
+        <item name="android:colorAccent">#5A0F1A</item>
     </style>
 </resources>

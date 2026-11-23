@@ -20,11 +20,35 @@ jobs:
         uses: gradle/actions/setup-gradle@v5
         with:
           gradle-version: '8.7'
+
+      # APK de testes (debug): é a "garantia", gerado antes do release.
       - name: Build debug APK
         run: gradle assembleDebug
-      - name: Upload APK
+      - name: Prepare debug APK
+        run: |
+          mkdir -p dist-debug
+          cp app/build/outputs/apk/debug/app-debug.apk dist-debug/VeyraPlayer-debug.apk
+      - name: Upload debug APK
         uses: actions/upload-artifact@v6
         with:
-          name: offline-music-debug-apk
-          path: app/build/outputs/apk/debug/app-debug.apk
+          name: VeyraPlayer-debug
+          path: dist-debug/VeyraPlayer-debug.apk
+          if-no-files-found: error
+
+      # APK release (enxuto). Se ele falhar, o debug acima continua disponível.
+      - name: Build release APK
+        id: release
+        continue-on-error: true
+        run: gradle assembleRelease
+      - name: Prepare release APK
+        if: steps.release.outcome == 'success'
+        run: |
+          mkdir -p dist-release
+          cp app/build/outputs/apk/release/app-release.apk dist-release/VeyraPlayer-release.apk
+      - name: Upload release APK
+        if: steps.release.outcome == 'success'
+        uses: actions/upload-artifact@v6
+        with:
+          name: VeyraPlayer-release
+          path: dist-release/VeyraPlayer-release.apk
           if-no-files-found: error

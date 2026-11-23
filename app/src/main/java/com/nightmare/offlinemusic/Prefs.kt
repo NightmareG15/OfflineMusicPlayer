@@ -3,7 +3,6 @@ package com.nightmare.offlinemusic
 import android.content.Context
 import org.json.JSONArray
 import org.json.JSONObject
-import java.io.File
 
 /** Uma playlist: nome + ids das músicas (o "_ID" do MediaStore). */
 class Playlist(var name: String, val ids: MutableList<Long>)
@@ -11,7 +10,9 @@ class Playlist(var name: String, val ids: MutableList<Long>)
 /** Guarda as escolhas do usuário (tema, aleatório, repetir, playlists, imagem de fundo). */
 object Prefs {
     private const val NAME = "settings"
-    const val WALLPAPER_FILE = "wallpaper.jpg"
+    const val SORT_NAME = 0
+    const val SORT_ARTIST = 1
+    const val SORT_RECENT = 2
 
     private fun p(ctx: Context) = ctx.getSharedPreferences(NAME, Context.MODE_PRIVATE)
 
@@ -24,12 +25,11 @@ object Prefs {
     fun setPauseOnUnplug(ctx: Context, value: Boolean) = p(ctx).edit().putBoolean("pause_on_unplug", value).apply()
 
     /**
-     * Volta as configurações para o padrão (tema escuro, pausar ao desconectar o fone) e remove a imagem de fundo.
-     * Playlists e nomes personalizados NÃO são apagados.
+     * Volta as configurações para o padrão (tema escuro, pausar ao desconectar o fone, ordem da lista).
+     * Playlists, nomes personalizados e a última música tocada NÃO são apagados.
      */
     fun resetSettings(ctx: Context) {
-        p(ctx).edit().remove("dark").remove("pause_on_unplug").apply()
-        wallpaperFile(ctx).delete()
+        p(ctx).edit().remove("dark").remove("pause_on_unplug").remove("sort").apply()
     }
 
     fun shuffle(ctx: Context): Boolean = p(ctx).getBoolean("shuffle", false)
@@ -39,8 +39,25 @@ object Prefs {
     fun repeatMode(ctx: Context): Int = p(ctx).getInt("repeat", 0)
     fun setRepeatMode(ctx: Context, value: Int) = p(ctx).edit().putInt("repeat", value).apply()
 
-    fun wallpaperFile(ctx: Context): File = File(ctx.filesDir, WALLPAPER_FILE)
-    fun hasWallpaper(ctx: Context): Boolean = wallpaperFile(ctx).exists()
+    /** Ordem da lista: nome (padrão), artista ou mais recentes. */
+    fun sortMode(ctx: Context): Int = p(ctx).getInt("sort", SORT_NAME)
+    fun setSortMode(ctx: Context, value: Int) = p(ctx).edit().putInt("sort", value).apply()
+
+    // ---- Continuar de onde parou ----
+
+    /** Número (id) da última música tocada, ou -1. */
+    fun lastId(ctx: Context): Long = p(ctx).getLong("last_id", -1L)
+    fun lastPosition(ctx: Context): Int = p(ctx).getInt("last_pos", 0)
+
+    /** Nome da playlist de onde a música estava tocando (nulo = "Todas as músicas"). */
+    fun lastContext(ctx: Context): String? = p(ctx).getString("last_ctx", null)
+
+    fun setLast(ctx: Context, id: Long, positionMs: Int, context: String?) {
+        p(ctx).edit().putLong("last_id", id).putInt("last_pos", positionMs).putString("last_ctx", context).apply()
+    }
+
+    /** A música terminou sozinha: a próxima vez começa do início. */
+    fun clearLastPosition(ctx: Context) = p(ctx).edit().putInt("last_pos", 0).apply()
 
     // ---- Nomes personalizados (só dentro do app; o arquivo da música não é alterado) ----
 

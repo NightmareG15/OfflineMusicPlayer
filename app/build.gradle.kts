@@ -17,11 +17,39 @@ android {
         jvmTarget = "17"
     }
 
+    // Chave fixa: todas as versões (debug e release) são assinadas com a mesma chave,
+    // então uma versão nova instala por cima da anterior sem apagar os dados do app.
+    signingConfigs {
+        create("veyra") {
+            storeFile = file("signing/veyra.jks")
+            storePassword = "veyra-player"
+            keyAlias = "veyra"
+            keyPassword = "veyra-player"
+        }
+    }
+
     defaultConfig {
         applicationId = "com.nightmare.offlinemusic"
         minSdk = 23
         targetSdk = 35
-        versionCode = 3
-        versionName = "0.3"
+        versionCode = 4
+        versionName = "0.4"
+    }
+
+    buildTypes {
+        getByName("debug") {
+            signingConfig = signingConfigs.getByName("veyra")
+        }
+        getByName("release") {
+            signingConfig = signingConfigs.getByName("veyra")
+            // Versão enxuta: remove código e recursos que não são usados (APK menor, usa menos memória).
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"))
+        }
+    }
+
+    lint {
+        checkReleaseBuilds = false
     }
 }

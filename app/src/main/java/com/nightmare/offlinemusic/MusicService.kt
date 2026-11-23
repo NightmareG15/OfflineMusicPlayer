@@ -18,8 +18,11 @@ import android.media.session.MediaSession
 import android.media.session.PlaybackState
 import android.os.Binder
 import android.os.Build
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 import android.os.PowerManager
+import android.os.SystemClock
 
 class MusicService : Service() {
     inner class LocalBinder : Binder() { fun getService(): MusicService = this@MusicService }
@@ -52,6 +55,36 @@ class MusicService : Service() {
     private var playing = false
     private var pausedByFocusLoss = false
     private var errorStreak = 0
+
+    private val handler = Handler(Looper.getMainLooper())
+
+    // Continuar de onde parou
+    private var queueContext: String? = null   // de qual playlist a fila veio (nulo = todas as músicas)
+    private var pendingSeekMs = 0              // posição inicial pedida ao montar a fila
+    private var saverRunning = false
+    private val saveRunnable = object : Runnable {
+        override fun run() {
+            saveProgress()
+            handler.postDelayed(this, SAVE_INTERVAL_MS)
+        }
+    }
+
+    // Timer para dormir
+    private var sleepDeadline = 0L             // SystemClock.elapsedRealtime() em que o timer acaba (0 = sem timer)
+    private var fading = false
+    private var fadeVolume = 1f
+    private val sleepRunnable = Runnable { startFadeOut() }
+    private val fadeRunnable = object : Runnable {
+        override fun run() {
+            fadeVolume -= 0.07f
+            if (fadeVolume <= 0f) {
+                stopPlayback()
+                return
+            }
+            try { player?.setVolume(fadeVolume, fadeVolume) } catch (e: IllegalStateException) { }
+            handler.postDelayed(this, 300)
+        }
+    }
 
     /** A tela se registra aqui para ser avisada quando a música ou o estado mudam. */
     var onStateChanged: ((title: String?, playing: Boolean) -> Unit)? = null
@@ -119,6 +152,7 @@ class MusicService : Service() {
             ACTION_TOGGLE -> togglePlayback()
             ACTION_NEXT -> next()
             ACTION_PREVIOUS -> previous()
+            ACTION_CLOSE -> stopPlayback()
         }
         return START_NOT_STICKY
     }
@@ -126,11 +160,20 @@ class MusicService : Service() {
     // ---- Funções usadas pela tela, pela notificação e pelos botões do fone ----
 
     /** Define a fila e começa a tocar a música [startIndex]. A fila vem direto da tela (sem limite de tamanho). */
-    fun setQueue(newIds: LongArray, newTitles: ArrayList<String>, newArtists: ArrayList<String>, startIndex: Int) {
+    fun setQueue(
+        newIds: LongArray,
+        newTitles: ArrayList<String>,
+        newArtists: ArrayList<String>,
+        startIndex: Int,
+        startPositionMs: Int = 0,
+        context: String? = null
+    ) {
         if (newIds.isEmpty()) return
         ids = newIds            // a tela entrega listas novas e não as altera depois
         titles = newTitles
         artists = newArtists
+        queueContext = context
+        pendingSeekMs = startPositionMs
         errorStreak = 0
         buildOrder(startIndex.coerceIn(0, ids.size - 1))
         // Garante que o serviço continue vivo (em primeiro plano) mesmo com a tela fechada.
@@ -233,7 +276,7 @@ class MusicService : Service() {
             pos++
         } else {
             // Chegou ao fim da lista: com "repetir" desligado, a reprodução termina sozinha.
-            if (auto && repeatMode == REPEAT_OFF) { stopPlayback(); return }
+            if (auto && repeatMode == REPEAT_OFF) { stopPlayback(save = false); return }
             if (shuffle) {
                 val last = index
                 val again = ArrayList<Int>()
@@ -256,6 +299,9 @@ class MusicService : Service() {
         playing = false
         prepared = false
         pausedByFocusLoss = false
+        val startAt = pendingSeekMs
+        pendingSeekMs = 0
+        Prefs.setLast(this, ids[index], startAt, queueContext)   // já fica registrada como "última música"
         if (session == null) createMediaSession()
         registerNoisyReceiver()
         startForeground(NOTIFICATION_ID, buildNotification())
@@ -268,9 +314,12 @@ class MusicService : Service() {
             mp.setAudioAttributes(audioAttrs)
             mp.setDataSource(this, Media.uriFor(ids[index]))
             mp.isLooping = (repeatMode == REPEAT_ONE)
+            if (fading) mp.setVolume(fadeVolume, fadeVolume)
             mp.setOnPreparedListener { ready ->
                 prepared = true
                 errorStreak = 0
+                // Continuar de onde parou: pula para o ponto salvo (se ainda houver música depois dele).
+                if (startAt > 0 && startAt < ready.duration - 1500) ready.seekTo(startAt)
                 ready.start()
                 playing = true
                 updateMetadata()
@@ -307,6 +356,7 @@ class MusicService : Service() {
         try { current.pause() } catch (e: IllegalStateException) { return }
         playing = false
         pausedByFocusLoss = resumeLater
+        saveProgress()
         updateNotification()
     }
 
@@ -353,7 +403,10 @@ class MusicService : Service() {
     }
 
     @Suppress("DEPRECATION")
-    private fun stopPlayback() {
+    private fun stopPlayback(save: Boolean = true) {
+        if (save) saveProgress() else Prefs.clearLastPosition(this)
+        cancelSleepTimer()
+        stopSaver()
         releasePlayer()
         playing = false
         pausedByFocusLoss = false
@@ -369,7 +422,7 @@ class MusicService : Service() {
 
     @Suppress("DEPRECATION")
     private fun createMediaSession() {
-        val s = MediaSession(this, "OfflineMusic")
+        val s = MediaSession(this, "VeyraPlayer")
         s.setFlags(MediaSession.FLAG_HANDLES_MEDIA_BUTTONS or MediaSession.FLAG_HANDLES_TRANSPORT_CONTROLS)
         s.setCallback(object : MediaSession.Callback() {
             override fun onPlay() { if (!playing) togglePlayback() }
@@ -427,11 +480,12 @@ class MusicService : Service() {
         val previous = servicePendingIntent(ACTION_PREVIOUS, 1)
         val toggle = servicePendingIntent(ACTION_TOGGLE, 2)
         val next = servicePendingIntent(ACTION_NEXT, 3)
+        val close = servicePendingIntent(ACTION_CLOSE, 4)
         val builder = if (Build.VERSION.SDK_INT >= 26) Notification.Builder(this, CHANNEL_ID) else Notification.Builder(this)
         val style = Notification.MediaStyle().setShowActionsInCompactView(0, 1, 2)
         session?.let { style.setMediaSession(it.sessionToken) }
         return builder
-            .setContentTitle(titles.getOrNull(index) ?: "Offline Music")
+            .setContentTitle(titles.getOrNull(index) ?: getString(R.string.app_name))
             .setContentText(artists.getOrNull(index)?.takeIf { it.isNotBlank() && it != "<unknown>" } ?: "Reprodução local")
             .setSmallIcon(R.drawable.ic_notification)
             .setContentIntent(openApp)
@@ -445,6 +499,7 @@ class MusicService : Service() {
                 toggle
             )
             .addAction(android.R.drawable.ic_media_next, "Próxima", next)
+            .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Fechar", close)
             .build()
     }
 
@@ -456,10 +511,65 @@ class MusicService : Service() {
     private fun updateNotification() {
         (getSystemService(NOTIFICATION_SERVICE) as NotificationManager).notify(NOTIFICATION_ID, buildNotification())
         updateSession()
+        if (playing) startSaver() else stopSaver()
         onStateChanged?.invoke(titles.getOrNull(index), playing)
     }
 
+    // ---- Continuar de onde parou ----
+
+    private fun saveProgress() {
+        if (!prepared || index >= ids.size) return
+        Prefs.setLast(this, ids[index], positionMs(), queueContext)
+    }
+
+    private fun startSaver() {
+        if (saverRunning) return
+        saverRunning = true
+        handler.postDelayed(saveRunnable, SAVE_INTERVAL_MS)
+    }
+
+    private fun stopSaver() {
+        saverRunning = false
+        handler.removeCallbacks(saveRunnable)
+    }
+
+    // ---- Timer para dormir: ao acabar, o volume cai aos poucos e a música para ----
+
+    fun startSleepTimer(minutes: Int) {
+        if (ids.isEmpty()) return
+        cancelSleepTimer()
+        val delay = minutes * 60_000L
+        sleepDeadline = SystemClock.elapsedRealtime() + delay
+        handler.postDelayed(sleepRunnable, delay)
+    }
+
+    fun cancelSleepTimer() {
+        handler.removeCallbacks(sleepRunnable)
+        handler.removeCallbacks(fadeRunnable)
+        sleepDeadline = 0L
+        if (fading) {
+            fading = false
+            fadeVolume = 1f
+            try { player?.setVolume(1f, 1f) } catch (e: IllegalStateException) { }
+        }
+    }
+
+    /** Tempo que falta para o timer acabar, em milissegundos (0 = sem timer). */
+    fun sleepRemainingMs(): Long =
+        if (sleepDeadline == 0L) 0L else (sleepDeadline - SystemClock.elapsedRealtime()).coerceAtLeast(1L)
+
+    private fun startFadeOut() {
+        sleepDeadline = 0L
+        if (!playing) { stopPlayback(); return }
+        fading = true
+        fadeVolume = 1f
+        handler.post(fadeRunnable)
+    }
+
     override fun onDestroy() {
+        saveProgress()
+        stopSaver()
+        cancelSleepTimer()
         unregisterNoisyReceiver()
         releasePlayer()
         abandonAudioFocus()
@@ -472,6 +582,8 @@ class MusicService : Service() {
         const val ACTION_TOGGLE = "com.nightmare.offlinemusic.TOGGLE"
         const val ACTION_NEXT = "com.nightmare.offlinemusic.NEXT"
         const val ACTION_PREVIOUS = "com.nightmare.offlinemusic.PREVIOUS"
+        const val ACTION_CLOSE = "com.nightmare.offlinemusic.CLOSE"
+        private const val SAVE_INTERVAL_MS = 20_000L
         const val REPEAT_OFF = 0
         const val REPEAT_ALL = 1
         const val REPEAT_ONE = 2
