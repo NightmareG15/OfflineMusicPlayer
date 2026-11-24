@@ -4,10 +4,8 @@ import android.app.Activity
 import android.app.AlertDialog
 import android.content.ActivityNotFoundException
 import android.content.Intent
-import android.content.pm.ApplicationInfo
 import android.content.res.ColorStateList
 import android.graphics.Color
-import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
 import android.view.Gravity
@@ -146,19 +144,9 @@ class SettingsActivity : Activity() {
             .show()
     }
 
-    /** Informações do app: versão, número da compilação, tipo (release ou debug) e créditos. */
-    @Suppress("DEPRECATION")
+    /** Informações do app: versão, commit do GitHub que gerou o APK, tipo (release ou debug) e créditos. */
     private fun aboutCard(): View {
-        val info = try { packageManager.getPackageInfo(packageName, 0) } catch (e: Exception) { null }
-        val versionName = info?.versionName ?: "?"
-        val build = when {
-            info == null -> "?"
-            Build.VERSION.SDK_INT >= 28 -> info.longVersionCode.toString()
-            else -> info.versionCode.toString()
-        }
-        val isDebug = (applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0
-        val type = if (isDebug) "Debug (versão de testes)" else "Release"
-
+        val type = if (BuildConfig.DEBUG) "Debug (versão de testes)" else "Release"
         val card = TextView(this)
         card.textSize = 14f
         card.setTextColor(p.text)
@@ -169,8 +157,8 @@ class SettingsActivity : Activity() {
             setColor(p.surface)
         }
         card.text = getString(R.string.app_name) + "\n" +
-            "Versão: $versionName\n" +
-            "Compilação: $build\n" +
+            "Versão: ${BuildConfig.VERSION_NAME}\n" +
+            "Commit: ${BuildConfig.COMMIT_ID}\n" +
             "Tipo: $type\n\n" +
             CREDITS
         return card

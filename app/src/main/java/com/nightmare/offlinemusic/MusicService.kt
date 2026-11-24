@@ -184,6 +184,13 @@ class MusicService : Service() {
 
     fun currentTitle(): String? = if (player != null) titles.getOrNull(index) else null
 
+    fun currentArtist(): String? = if (player != null) artists.getOrNull(index) else null
+
+    /** Para de avisar [listener], mas só se ele ainda for o ouvinte atual (outra tela pode já ter assumido). */
+    fun clearListener(listener: (String?, Boolean) -> Unit) {
+        if (onStateChanged === listener) onStateChanged = null
+    }
+
     /** Número (id) da música atual, ou -1 se nada estiver carregado. */
     fun currentId(): Long = if (player != null && index < ids.size) ids[index] else -1L
 

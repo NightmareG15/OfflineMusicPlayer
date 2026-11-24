@@ -76,6 +76,10 @@ object Ui {
         }
     }
 
+    /** 125 segundos viram "2:05". */
+    fun formatTime(totalSeconds: Int): String =
+        "${totalSeconds / 60}:${(totalSeconds % 60).toString().padStart(2, '0')}"
+
     /** Aviso rápido na tela. */
     fun toast(ctx: Context, text: String, long: Boolean = false) {
         Toast.makeText(ctx, text, if (long) Toast.LENGTH_LONG else Toast.LENGTH_SHORT).show()

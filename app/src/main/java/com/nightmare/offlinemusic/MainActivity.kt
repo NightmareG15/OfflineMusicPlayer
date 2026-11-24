@@ -8,7 +8,6 @@ import android.content.Context
 import android.content.Intent
 import android.content.ServiceConnection
 import android.content.pm.PackageManager
-import android.content.res.ColorStateList
 import android.database.Cursor
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
@@ -42,7 +41,6 @@ import android.widget.ImageButton
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ListView
-import android.widget.SeekBar
 import android.widget.TextView
 import java.text.Normalizer
 
@@ -81,26 +79,17 @@ class MainActivity : Activity() {
     private lateinit var timerButton: ImageButton
     private lateinit var nowPlaying: TextView
     private lateinit var viewLabel: TextView
-    private lateinit var playButton: ImageButton
-    private lateinit var shuffleButton: ImageButton
-    private lateinit var repeatButton: ImageButton
-    private lateinit var seek: SeekBar
-    private lateinit var timeCurrent: TextView
-    private lateinit var timeTotal: TextView
+    private lateinit var panel: PlayerPanel
     private lateinit var wallpaperView: ImageView
 
     private var musicService: MusicService? = null
     private var bound = false
-    private var seeking = false
-    private var lastPosSec = -1
-    private var lastDurSec = -1
-    private var timerShownActive: Boolean? = null
     private val handler = Handler(Looper.getMainLooper())
 
     private val ticker = object : Runnable {
         override fun run() {
-            if (musicService?.isPlayingNow() == true) updateProgress()
-            refreshTimerIcon()
+            if (musicService?.isPlayingNow() == true) panel.updateProgress()
+            SleepTimerDialog.refreshIcon(timerButton, p, musicService)
             handler.postDelayed(this, 1000)
         }
     }
@@ -110,15 +99,19 @@ class MainActivity : Activity() {
         applyFilter()
     }
 
+    private val stateListener: (String?, Boolean) -> Unit = { title, playing ->
+        runOnUiThread { render(title, playing) }
+    }
+
     private val connection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
             val service = (binder as MusicService.LocalBinder).getService()
             musicService = service
             bound = true
             // Sempre que a música/estado mudar no serviço, atualiza a tela.
-            service.onStateChanged = { title, playing -> runOnUiThread { render(title, playing) } }
+            service.onStateChanged = stateListener
             render(service.currentTitle(), service.isPlayingNow())
-            refreshModeButtons()
+            panel.refreshModeButtons()
         }
 
         override fun onServiceDisconnected(name: ComponentName?) {
@@ -135,7 +128,6 @@ class MainActivity : Activity() {
         p = Ui.palette(this)
         buildInterface()
         Ui.applySystemBars(this, p)
-        refreshModeButtons()
         if (!hasAudioPermission()) requestPermissions(arrayOf(audioPermission()), REQ_AUDIO)
     }
 
@@ -154,7 +146,7 @@ class MainActivity : Activity() {
         handler.removeCallbacks(filterRunnable)
         freeWallpaper()
         if (bound) {
-            musicService?.onStateChanged = null
+            musicService?.clearListener(stateListener)
             unbindService(connection)
             bound = false
         }
@@ -230,7 +222,9 @@ class MainActivity : Activity() {
         val playlistsButton = Ui.iconButton(this, R.drawable.ic_playlist, p.text, "Listas")
         playlistsButton.setOnClickListener { showPlaylistsDialog() }
         timerButton = Ui.iconButton(this, R.drawable.ic_timer, p.text, "Timer para dormir")
-        timerButton.setOnClickListener { showTimerDialog() }
+        timerButton.setOnClickListener {
+            SleepTimerDialog.show(this, p, musicService) { SleepTimerDialog.refreshIcon(timerButton, p, musicService) }
+        }
         val settingsButton = Ui.iconButton(this, R.drawable.ic_settings, p.text, "Configurações")
         settingsButton.setOnClickListener { startActivity(Intent(this, SettingsActivity::class.java)) }
         header.addView(playlistsButton, LinearLayout.LayoutParams(dp(42), dp(42)))
@@ -296,6 +290,9 @@ class MainActivity : Activity() {
         cardShape.cornerRadius = dp(12).toFloat()
         cardShape.setColor(p.surface)
         nowPlaying.background = cardShape
+        nowPlaying.setOnClickListener {
+            if (musicService?.currentTitle() != null) startActivity(Intent(this, NowPlayingActivity::class.java))
+        }
 
         // ---- Lista de músicas (com mensagem para quando estiver vazia)
         adapter = object : ArrayAdapter<Track>(this, android.R.layout.simple_list_item_1, shown) {
@@ -337,73 +334,15 @@ class MainActivity : Activity() {
         listFrame.addView(list, FrameLayout.LayoutParams(-1, -1))
         listFrame.addView(emptyText, FrameLayout.LayoutParams(-1, -1))
 
-        // ---- Barra de progresso
-        val seekRow = LinearLayout(this)
-        seekRow.orientation = LinearLayout.HORIZONTAL
-        seekRow.gravity = Gravity.CENTER_VERTICAL
-        timeCurrent = TextView(this)
-        timeCurrent.text = "0:00"
-        timeCurrent.textSize = 12f
-        timeCurrent.setTextColor(p.sub)
-        timeTotal = TextView(this)
-        timeTotal.text = "0:00"
-        timeTotal.textSize = 12f
-        timeTotal.setTextColor(p.sub)
-        seek = SeekBar(this)
-        seek.progressTintList = ColorStateList.valueOf(p.highlight)
-        seek.thumbTintList = ColorStateList.valueOf(p.highlight)
-        seek.progressBackgroundTintList = ColorStateList.valueOf(p.sub)
-        seek.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-            override fun onProgressChanged(bar: SeekBar?, progress: Int, fromUser: Boolean) {
-                if (fromUser) timeCurrent.text = formatTime(progress / 1000)
-            }
-            override fun onStartTrackingTouch(bar: SeekBar?) { seeking = true }
-            override fun onStopTrackingTouch(bar: SeekBar?) {
-                musicService?.seekTo(bar?.progress ?: 0)
-                seeking = false
-                lastPosSec = -1
-            }
-        })
-        seekRow.addView(timeCurrent, LinearLayout.LayoutParams(-2, -2))
-        seekRow.addView(seek, LinearLayout.LayoutParams(0, -2, 1f))
-        seekRow.addView(timeTotal, LinearLayout.LayoutParams(-2, -2))
-
-        // ---- Controles: aleatório, anterior, tocar/pausar, próxima, repetir
-        val controls = LinearLayout(this)
-        controls.orientation = LinearLayout.HORIZONTAL
-        controls.gravity = Gravity.CENTER
-
-        shuffleButton = Ui.iconButton(this, R.drawable.ic_shuffle, p.sub, "Aleatório")
-        shuffleButton.setOnClickListener { toggleShuffle() }
-        val previousButton = Ui.iconButton(this, R.drawable.ic_previous, p.text, "Anterior")
-        previousButton.setOnClickListener { musicService?.previous() }
-        playButton = Ui.iconButton(this, R.drawable.ic_play, Color.WHITE, "Tocar ou pausar")
-        val circle = GradientDrawable()
-        circle.shape = GradientDrawable.OVAL
-        circle.setColor(p.accent)
-        playButton.background = circle
-        val playPad = dp(16)
-        playButton.setPadding(playPad, playPad, playPad, playPad)
-        playButton.setOnClickListener { onPlayPressed() }
-        val nextButton = Ui.iconButton(this, R.drawable.ic_next, p.text, "Próxima")
-        nextButton.setOnClickListener { musicService?.next() }
-        repeatButton = Ui.iconButton(this, R.drawable.ic_repeat, p.sub, "Repetir")
-        repeatButton.setOnClickListener { cycleRepeat() }
-
-        fun slot(size: Int) = LinearLayout.LayoutParams(dp(size), dp(size)).apply { setMargins(dp(4), 0, dp(4), 0) }
-        controls.addView(shuffleButton, slot(48))
-        controls.addView(previousButton, slot(56))
-        controls.addView(playButton, slot(68))
-        controls.addView(nextButton, slot(56))
-        controls.addView(repeatButton, slot(48))
+        panel = PlayerPanel(this, p, { musicService }, { onPlayPressed() })
 
         content.addView(header)
         content.addView(viewLabel)
         content.addView(searchRow, LinearLayout.LayoutParams(-1, dp(44)))
-        content.addView(nowPlaying, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(8) })
         content.addView(listFrame, LinearLayout.LayoutParams(-1, 0, 1f).apply { topMargin = dp(8) })
-        content.addView(seekRow, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(8) })
-        content.addView(controls, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(4) })
+        content.addView(nowPlaying, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(8) })
+        content.addView(panel.seekRow, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(8) })
+        content.addView(panel.controls, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(4) })
         setContentView(root)
         content.requestFocus()   // o foco começa fora da caixa de pesquisa (o teclado não abre sozinho)
         refreshEmptyText()
@@ -422,7 +361,7 @@ class MainActivity : Activity() {
             val track = allTracks.firstOrNull { it.id == lastId }
             if (track != null) {
                 val seconds = Prefs.lastPosition(this) / 1000
-                return if (seconds > 0) "Continuar: ${track.title} (${formatTime(seconds)})" else "Continuar: ${track.title}"
+                return if (seconds > 0) "Continuar: ${track.title} (${Ui.formatTime(seconds)})" else "Continuar: ${track.title}"
             }
         }
         return "Escolha uma música para começar"
@@ -435,13 +374,13 @@ class MainActivity : Activity() {
             playing -> "Tocando: $title"
             else -> "Pausado: $title"
         }
-        playButton.setImageResource(if (playing) R.drawable.ic_pause else R.drawable.ic_play)
-        playingId = musicService?.currentId() ?: -1L
-        adapter.notifyDataSetChanged()
-        lastPosSec = -1
-        lastDurSec = -1
-        updateProgress()
-        refreshTimerIcon()
+        panel.render(playing)
+        val newId = musicService?.currentId() ?: -1L
+        if (newId != playingId) {
+            playingId = newId
+            adapter.notifyDataSetChanged()   // só redesenha a lista quando a música destacada muda
+        }
+        SleepTimerDialog.refreshIcon(timerButton, p, musicService)
     }
 
     private fun refreshEmptyText() {
@@ -454,23 +393,6 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun updateProgress() {
-        val service = musicService ?: return
-        if (seeking) return
-        val duration = service.durationMs()
-        val position = service.positionMs()
-        val max = if (duration > 0) duration else 1
-        if (seek.max != max) seek.max = max
-        seek.progress = if (duration > 0) position else 0
-        // Os textos só são refeitos quando o segundo muda (evita criar texto à toa).
-        val posSec = position / 1000
-        if (posSec != lastPosSec) { lastPosSec = posSec; timeCurrent.text = formatTime(posSec) }
-        val durSec = duration / 1000
-        if (durSec != lastDurSec) { lastDurSec = durSec; timeTotal.text = formatTime(durSec) }
-    }
-
-    private fun formatTime(totalSeconds: Int): String =
-        "${totalSeconds / 60}:${(totalSeconds % 60).toString().padStart(2, '0')}"
 
     // ------------------------------------------------------------------ tocar, continuar e controles
 
@@ -528,79 +450,7 @@ class MainActivity : Activity() {
         startQueue(list, index, position, context)
     }
 
-    private fun refreshModeButtons() {
-        val shuffleOn = Prefs.shuffle(this)
-        shuffleButton.setColorFilter(if (shuffleOn) p.highlight else p.sub)
-        val mode = Prefs.repeatMode(this)
-        repeatButton.setImageResource(if (mode == MusicService.REPEAT_ONE) R.drawable.ic_repeat_one else R.drawable.ic_repeat)
-        repeatButton.setColorFilter(if (mode == MusicService.REPEAT_OFF) p.sub else p.highlight)
-    }
 
-    private fun toggleShuffle() {
-        val on = !Prefs.shuffle(this)
-        val service = musicService
-        if (service != null) service.setShuffle(on) else Prefs.setShuffle(this, on)
-        refreshModeButtons()
-        Ui.toast(this, if (on) "Aleatório: ligado" else "Aleatório: desligado")
-    }
-
-    private fun cycleRepeat() {
-        val next = (Prefs.repeatMode(this) + 1) % 3
-        val service = musicService
-        if (service != null) service.setRepeat(next) else Prefs.setRepeatMode(this, next)
-        refreshModeButtons()
-        val text = when (next) {
-            MusicService.REPEAT_ALL -> "Repetir: lista inteira"
-            MusicService.REPEAT_ONE -> "Repetir: esta faixa"
-            else -> "Repetir: desligado"
-        }
-        Ui.toast(this, text)
-    }
-
-    // ------------------------------------------------------------------ timer para dormir
-
-    private fun refreshTimerIcon() {
-        val active = (musicService?.sleepRemainingMs() ?: 0L) > 0L
-        if (timerShownActive == active) return
-        timerShownActive = active
-        timerButton.setColorFilter(if (active) p.highlight else p.text)
-    }
-
-    private fun showTimerDialog() {
-        val service = musicService
-        if (service == null || service.currentTitle() == null) {
-            Ui.toast(this, "Toque uma música primeiro para usar o timer.")
-            return
-        }
-        val remaining = service.sleepRemainingMs()
-        val options = intArrayOf(15, 30, 45, 60, 90)
-        val labels = ArrayList<String>()
-        if (remaining > 0) labels.add("Desativar timer")
-        for (minutes in options) labels.add(minutesLabel(minutes))
-        val title = if (remaining > 0) "Timer para dormir (faltam ${(remaining + 59_999) / 60_000} min)" else "Timer para dormir"
-        dialog()
-            .setTitle(title)
-            .setItems(labels.toTypedArray()) { _, which ->
-                val offset = if (remaining > 0) 1 else 0
-                if (remaining > 0 && which == 0) {
-                    service.cancelSleepTimer()
-                    Ui.toast(this, "Timer desativado.")
-                } else {
-                    val minutes = options[which - offset]
-                    service.startSleepTimer(minutes)
-                    Ui.toast(this, "A música vai parar em ${minutesLabel(minutes)}.")
-                }
-                refreshTimerIcon()
-            }
-            .setNegativeButton("Cancelar", null)
-            .show()
-    }
-
-    private fun minutesLabel(minutes: Int): String = when (minutes) {
-        60 -> "1 hora"
-        90 -> "1 hora e 30 min"
-        else -> "$minutes minutos"
-    }
 
     // ------------------------------------------------------------------ biblioteca e ordem da lista
 
@@ -668,6 +518,7 @@ class MainActivity : Activity() {
         )
         val selection = "${MediaStore.Audio.Media.IS_MUSIC} != 0"
         val customTitles = Prefs.loadCustomTitles(this)
+        val artistPool = HashMap<String, String>()   // artistas repetidos passam a compartilhar uma só String
         val cursor: Cursor? = try {
             contentResolver.query(Media.collection(), projection, selection, null, null)
         } catch (e: Exception) {
@@ -681,7 +532,8 @@ class MainActivity : Activity() {
             while (it.moveToNext()) {
                 val id = it.getLong(idCol)
                 val original = it.getString(titleCol) ?: "Faixa sem título"
-                val artist = it.getString(artistCol) ?: ""
+                val rawArtist = it.getString(artistCol) ?: ""
+                val artist = artistPool.getOrPut(rawArtist) { rawArtist }
                 result.add(Track(id, customTitles[id] ?: original, artist, original, it.getLong(addedCol)))
             }
         }

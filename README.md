@@ -10,6 +10,7 @@ Sem anúncios, sem conta, sem internet. Pensado para ser leve e rodar bem em apa
 - Continuar de onde parou: o app lembra a última música e o ponto em que estava.
 - Timer para dormir (15, 30, 45 minutos, 1 hora ou 1h30), com o volume caindo aos poucos no final.
 - Barra de progresso (toque ou arraste para avançar/voltar na música).
+- Tela "Tocando agora" (toque no cartão acima dos controles): nome, artista, capa em baixa qualidade, progresso, controles e timer. A capa só fica na memória enquanto a tela está aberta e visível.
 - Modo aleatório e repetir (desligado, lista inteira ou uma faixa).
 - Barra de pesquisa: filtra por nome, artista ou nome original, sem diferenciar maiúsculas nem acentos ("cancao" acha "Canção").
 - Ordenar a lista por nome, artista ou mais recentes.
@@ -21,7 +22,7 @@ Sem anúncios, sem conta, sem internet. Pensado para ser leve e rodar bem em apa
 - Tema Escuro (padrão) ou Claro, nas configurações, com fundo padrão do app.
 - Atalho nas configurações para as configurações de som do Android.
 - Botão para redefinir as configurações ao padrão (não apaga playlists nem nomes personalizados).
-- Seção "Sobre o app" com versão, número da compilação, tipo (release ou debug) e créditos.
+- Seção "Sobre o app" com versão, identificador do commit do GitHub que gerou o APK, tipo (release ou debug) e créditos.
 - Tela sempre em modo retrato.
 
 ## Gerar os APKs sem instalar Android SDK no seu PC

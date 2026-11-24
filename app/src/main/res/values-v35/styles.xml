@@ -1,4 +1,0 @@
-<resources>
-    <!-- Arquivo antigo da v0.2/v0.3. Não é mais usado e pode ser apagado do repositório.
-         Fica vazio para não sobrescrever o tema atual (values/styles.xml) no Android 15. -->
-</resources>

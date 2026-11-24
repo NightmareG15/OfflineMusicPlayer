@@ -3,6 +3,10 @@ plugins {
     id("org.jetbrains.kotlin.android")
 }
 
+// Identificador do commit do GitHub que gerou este APK (os 7 primeiros caracteres).
+// No GitHub Actions a variável GITHUB_SHA já existe; numa compilação local aparece "local".
+val commitId: String = (System.getenv("GITHUB_SHA") ?: "local").take(7)
+
 android {
     namespace = "com.nightmare.offlinemusic"
     compileSdk = 35
@@ -32,8 +36,13 @@ android {
         applicationId = "com.nightmare.offlinemusic"
         minSdk = 23
         targetSdk = 35
-        versionCode = 4
-        versionName = "0.4"
+        versionCode = 5
+        versionName = "0.4.1"
+        buildConfigField("String", "COMMIT_ID", "\"$commitId\"")
+    }
+
+    buildFeatures {
+        buildConfig = true
     }
 
     buildTypes {
